@@ -125,4 +125,4 @@ with col_metrics:
     st.metric("Operating Temp", f"{temp}°C", f"{temp-40:.1f}°" if temp > 40 else "Normal", delta_color="inverse")
     st.metric("Spike Count", f"{spikes} events", "Elevated" if spikes > 5 else "Stable")
     st.metric("Overdue Maintenance", f"{maint_months} Mo.", "Critical" if maint_months > 36 else "OK")
-    st.metric("AI Confidence", "98.4%")
+    st.metric("Confidence", "98.4%")
