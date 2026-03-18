@@ -27,7 +27,8 @@ if 'latest_eval' not in st.session_state:
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown("<h1 style='text-align: center; color: #4da6ff;'>⚡ PowerGuard AI Login</h1>", unsafe_allow_html=True)
+    # تعديل العنوان هنا
+    st.markdown("<h1 style='text-align: center; color: #4da6ff;'>⚡ PowerGuard AI - Relay_Failure_Prediction</h1>", unsafe_allow_html=True)
     
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
@@ -65,11 +66,17 @@ st.set_page_config(page_title="Relay AI Diagnostics", page_icon="⚡", layout="w
 
 # --- SIDEBAR: Documentation & Methodology ---
 with st.sidebar:
+    # إضافة زرار تسجيل الخروج هنا
+    if st.button("🚪 Logout", type="primary", use_container_width=True):
+        st.session_state['logged_in'] = False
+        st.rerun()
+        
     st.header("📘 Project Documentation")
     st.subheader("1. Executive Summary")
     st.write("Predicts failure probability of electrical protection relays by analyzing environmental stressors.")
     
     st.subheader("2. Risk Equation")
+    # Using markdown instead of latex for regular equations to avoid formatting issues if requested, but maintaining your original format as requested by system instructions
     st.latex(r"z = \beta_0 + (\beta_1 \cdot A) + (\beta_2 \cdot T) + (\beta_3 \cdot S) + (\beta_4 \cdot Trip) + (\beta_5 \cdot M)")
     
     with st.expander("Variable Definitions"):
@@ -148,7 +155,7 @@ st.subheader("🔍 Impact Analysis & Critical Metrics")
 col_bar, col_metrics = st.columns([2, 1])
 
 with col_bar:
-    # حساب تأثير كل عنصر (إجابة سؤالك: كل عنصر أثر بقد إيه)
+    # حساب تأثير كل عنصر 
     impact_data = {
         "Thermal Stress (Temp)": (temp/80) * 100,
         "Wear & Tear (Age)": (age/240) * 100,
