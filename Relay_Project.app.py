@@ -1,3 +1,11 @@
+# ==============================================================================
+# © 2026 PowerGuard AI by Eng. Mahmoud Reda Ibrahim. All rights reserved.
+# Proprietary and Confidential.
+# Unauthorized copying, modification, distribution, or reverse engineering 
+# of this software, including the physics-informed AI guardrails, is strictly prohibited.
+# ==============================================================================
+
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,7 +13,41 @@ import plotly.graph_objects as go
 import plotly.express as px
 import joblib
 
-# 1. تحميل الموديل والسكيلر
+# ==========================================
+# --- 1. نظام تسجيل الدخول (Login System) ---
+# ==========================================
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+
+if 'fmea_log' not in st.session_state:
+    st.session_state['fmea_log'] = pd.DataFrame(columns=['Timestamp', 'Asset ID', 'DGA Index', 'Pred Temp', 'Overall Risk (%)', 'Status', 'RPN Level', 'Action Required'])
+
+if 'latest_eval' not in st.session_state:
+    st.session_state['latest_eval'] = None
+
+if not st.session_state['logged_in']:
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align: center; color: #4da6ff;'>⚡ PowerGuard AI Login</h1>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        with st.form("login_form"):
+            st.warning("🔒 Restricted Access. Authorized Personnel Only.")
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            submit = st.form_submit_button("Secure Login", use_container_width=True)
+            
+            if submit:
+                if username == "admin" and password == "DBA2026": 
+                    st.session_state['logged_in'] = True
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid Username or Password")
+    
+    st.stop()
+
+
+# 2. تحميل الموديل والسكيلر
 @st.cache_resource
 def load_assets():
     model = joblib.load('relay_model.pkl')
@@ -18,7 +60,7 @@ except:
     st.error("⚠️ Model files not found!")
     st.stop()
 
-# 2. إعدادات الصفحة
+# 3. إعدادات الصفحة
 st.set_page_config(page_title="Relay AI Diagnostics", page_icon="⚡", layout="wide")
 
 # --- SIDEBAR: Documentation & Methodology ---
@@ -126,3 +168,14 @@ with col_metrics:
     st.metric("Spike Count", f"{spikes} events", "Elevated" if spikes > 5 else "Stable")
     st.metric("Overdue Maintenance", f"{maint_months} Mo.", "Critical" if maint_months > 36 else "OK")
     st.metric("Confidence", "98.4%")
+
+# ==========================================
+# --- 4. حقوق الملكية (Footer) ---
+# ==========================================
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: #888888; font-size: 12px; padding: 10px;'>
+    <strong>© 2026 PowerGuard AI by Eng. Mahmoud Reda Ibrahim. All Rights Reserved.</strong><br>
+    <em>Confidential and Proprietary. The predictive algorithms and expert system overrides within this application are protected intellectual property.</em>
+</div>
+""", unsafe_allow_html=True)
