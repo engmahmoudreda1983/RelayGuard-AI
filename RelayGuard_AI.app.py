@@ -45,7 +45,7 @@ if 'fmea_log' not in st.session_state:
 if 'latest_eval' not in st.session_state:
     st.session_state['latest_eval'] = None
 
-# STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
+# STRICT SECURITY: Credentials from Streamlit Secrets Dashboard ONLY
 try:
     VALID_USER = st.secrets["admin_user"]
     VALID_PASS = st.secrets["admin_pass"]
@@ -81,7 +81,7 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED: Range now correctly defined as
+    # FIXED: range list added
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
@@ -124,19 +124,19 @@ with tab1:
             
             noise_index = st.number_input(
                 "Pre-Fault Noise Index", value=0.05, step=0.01,
-                help="Signal fluctuations before the event. High noise (>1.5) indicates analog card issues."
+                help="Standard signal fluctuations. Values >1.5 indicate potential analog card hardware issues."
             )
             fault_current = st.number_input(
                 "Max Fault Current (A)", value=1500, step=100,
-                help="Maximum recorded current during the fault event."
+                help="Peak current recorded during the fault. High currents cause mechanical stress."
             )
             age_months = st.number_input(
                 "Relay Age (Months)", value=192, step=12,
-                help="Operating age of the relay. >120 months indicates wear-out phase."
+                help="Operating age since commissioning. >120 months indicates wear-out phase."
             )
             alarms_count = st.number_input(
                 "Internal Alarms Count", value=0, step=1,
-                help="Count of internal self-test failure logs or blockings."
+                help="Count of internal warnings, self-test errors, or blocking signals from logs."
             )
             
             run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
@@ -150,32 +150,33 @@ with tab1:
                     # Load AI Model
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
-                    # Process Input
-                    features = np.array([[noise_index, fault_current, age_months, alarms_count]])
+                    # Prepare Input DataFrame
+                    features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
+                                            columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
                     
-                    # Predication with Array Flattening for Scalar Integer extraction
+                    # Prediction with Integer conversion fix
                     prediction_raw = model.predict(features)
                     prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
-                    # Risk and Probs
+                    # Probability & Risk
                     probs = model.predict_proba(features)
                     risk_score = (1 - probs) * 100
                     
                     classes = ['Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error']
                     mode = classes[prediction_idx]
                     
-                    # FMEA Condition Logic
+                    # Status logic
                     if risk_score < 30:
-                        status, color, rpn, action = "🟢 SAFE", "#2ecc71", "Low", "Normal operation. Follow TBM."
+                        status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
                     elif risk_score < 70:
-                        status, color, rpn, action = "🟡 WARNING", "#f1c40f", "Medium", f"Schedule CBM for {mode}."
+                        status, color, action = "🟡 WARNING", "#f1c40f", f"Schedule CBM inspection focusing on {mode}."
                     else:
-                        status, color, rpn, action = "🔴 DANGER", "#e74c3c", "Critical", f"Immediate replacement: {mode}."
+                        status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
 
-                    # Visualization
+                    # Dashboard Header Result
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    # Update History
+                    # Log History
                     new_log = pd.DataFrame([{
                         'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Asset ID': asset_id,
@@ -188,13 +189,14 @@ with tab1:
                     st.session_state['fmea_log'] = pd.concat([new_log, st.session_state['fmea_log']], ignore_index=True).head(100)
                     st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
+                    # Charts
                     v1, v2 = st.columns(2)
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
-                        st.markdown("#### 📊 Failure Probabilities")
+                        st.markdown("#### 📊 Failure Mode Probabilities")
                         fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=['#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'])
-                        fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0))
+                        fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
                 except Exception as e:
@@ -207,15 +209,15 @@ with tab2:
     if not st.session_state['fmea_log'].empty:
         st.dataframe(st.session_state['fmea_log'].style.apply(highlight_fmea, axis=1), use_container_width=True, hide_index=True)
     else:
-        st.info("No records available.")
+        st.info("No records available. Run an assessment to populate the database.")
 
 with tab3:
     if st.session_state['latest_eval']:
         ev = st.session_state['latest_eval']
         st.markdown(f"### 📄 AI Executive Report - {ev['id']}")
         st.info(f"**Health Index:** {100-ev['risk']:.1f}% | **Failure Mode:** {ev['mode']}")
-        st.success(f"**Action Plan:** {ev['action']}")
-        report = f"Asset: {ev['id']}\nRisk Score: {ev['risk']:.1f}%\nPrimary Issue: {ev['mode']}\nRecommendation: {ev['action']}"
-        st.download_button("📥 Download Report (TXT)", data=report, file_name=f"RelayGuard_{ev['id']}.txt", use_container_width=True)
+        st.success(f"**Corrective Action:** {ev['action']}")
+        report = f"RELAYGUARD AI DIAGNOSTIC REPORT\nAsset: {ev['id']}\nRisk Score: {ev['risk']:.1f}%\nStatus: {ev['status']}\nPrimary Issue: {ev['mode']}\nRecommendation: {ev['action']}"
+        st.download_button("📥 Download Full Report (TXT)", data=report, file_name=f"RelayGuard_{ev['id']}.txt", use_container_width=True)
     else:
-        st.info("Run an evaluation to generate a report.")
+        st.info("💡 Run an evaluation to generate a report.")
