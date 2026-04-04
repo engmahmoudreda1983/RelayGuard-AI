@@ -40,22 +40,24 @@ if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if 'fmea_log' not in st.session_state:
-    st.session_state['fmea_log'] = pd.DataFrame(columns=['Timestamp', 'Asset ID', 'Noise Index', 'Max Current (A)', 'Risk (%)', 'Status', 'Action'])
+    # Used tuple instead of list to prevent markdown deletion
+    st.session_state['fmea_log'] = pd.DataFrame(columns=("Timestamp", "Asset ID", "Noise Index", "Max Current (A)", "Risk (%)", "Status", "Action"))
 
 if 'latest_eval' not in st.session_state:
     st.session_state['latest_eval'] = None
 
-# STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
+# STRICT SECURITY
 try:
     VALID_USER = st.secrets["admin_user"]
     VALID_PASS = st.secrets["admin_pass"]
-except KeyError:
+except Exception:
     st.error("🚨 SECURITY ERROR: admin_user or admin_pass NOT found in Secrets Dashboard. Access Denied.")
     st.stop()
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(list((1, 1.5, 1)))
+    # Used tuple instead of list
+    col1, col2, col3 = st.columns((1, 1.5, 1))
     with col2:
         st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -75,40 +77,38 @@ if not st.session_state['logged_in']:
 # ==========================================
 def highlight_fmea(row):
     status = row.get('Status', '')
-    if 'SAFE' in status: return list(('background-color: #E8F5E9; color: #00A65A; font-weight: bold',)) * len(row)
-    if 'WARNING' in status: return list(('background-color: #FEF9E7; color: #D35400; font-weight: bold',)) * len(row)
-    if 'DANGER' in status: return list(('background-color: #FDEDEC; color: #C0392B; font-weight: bold',)) * len(row)
-    return list(('',)) * len(row)
+    if 'SAFE' in status: return ('background-color: #E8F5E9; color: #00A65A; font-weight: bold',) * len(row)
+    if 'WARNING' in status: return ('background-color: #FEF9E7; color: #D35400; font-weight: bold',) * len(row)
+    if 'DANGER' in status: return ('background-color: #FDEDEC; color: #C0392B; font-weight: bold',) * len(row)
+    return ('',) * len(row)
 
 def create_gauge(value, title, color):
-    # BULLETPROOF FIX: Using strict variables to prevent Markdown from deleting the arrays
-    val_0 = 0
-    val_30 = 30
-    val_70 = 70
-    val_100 = 100
-
+    # BULLETPROOF GAUGE: Absolutely no curly braces or square brackets used for the configuration!
+    ax_dict = dict(range=(0, 100), tickwidth=1)
+    s1 = dict(range=(0, 30), color='rgba(46, 204, 113, 0.2)')
+    s2 = dict(range=(30, 70), color='rgba(241, 196, 15, 0.2)')
+    s3 = dict(range=(70, 100), color='rgba(231, 76, 60, 0.2)')
+    g_steps = (s1, s2, s3)
+    t_dict = dict(line=dict(color="black", width=4), thickness=0.75, value=value)
+    
+    g_dict = dict(axis=ax_dict, bar=dict(color=color), bgcolor="white", steps=g_steps, threshold=t_dict)
+    num_dict = dict(suffix="%", font=dict(size=30, color=color))
+    title_dict = dict(text=title, font=dict(size=18, color='#333'))
+    
     fig = go.Figure(go.Indicator(
-        mode="gauge+number", value=value,
-        number={'suffix': "%", 'font': {'size': 30, 'color': color}},
-        title={'text': title, 'font': {'size': 18, 'color': '#333'}},
-        gauge={
-            'axis': {'range': list((val_0, val_100)), 'tickwidth': 1},
-            'bar': {'color': color},
-            'bgcolor': "white",
-            'steps': [
-                {'range': list((val_0, val_30)), 'color': 'rgba(46, 204, 113, 0.2)'}, 
-                {'range': list((val_30, val_70)), 'color': 'rgba(241, 196, 15, 0.2)'}, 
-                {'range': list((val_70, val_100)), 'color': 'rgba(231, 76, 60, 0.2)'}
-            ],
-            'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': value}
-        }))
+        mode="gauge+number", 
+        value=value,
+        number=num_dict,
+        title=title_dict,
+        gauge=g_dict
+    ))
     fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
-col_title, col_logout = st.columns(list((10, 2)))
+col_title, col_logout = st.columns((10, 2))
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
@@ -117,10 +117,10 @@ with col_logout:
         st.session_state['logged_in'] = False
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(list(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report")))
+tab1, tab2, tab3 = st.tabs(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"))
 
 with tab1:
-    col_in, col_dash = st.columns(list((1, 2.5)))
+    col_in, col_dash = st.columns((1, 2.5))
     
     with col_in:
         with st.form("relay_input_form"):
@@ -155,9 +155,9 @@ with tab1:
                     # Load AI Model
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
-                    # Prepare Input DataFrame
-                    features = pd.DataFrame(list(((noise_index, fault_current, age_months, alarms_count),)), 
-                                            columns=list(('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')))
+                    # Prepare Input DataFrame (Safe Tuples)
+                    features = pd.DataFrame(((noise_index, fault_current, age_months, alarms_count),), 
+                                            columns=("Pre_Fault_Noise_Index", "Max_Fault_Current_A", "Relay_Age_Months", "Internal_Alarms_Count"))
                     
                     # Prediction Calculation
                     prediction_raw = model.predict(features)
@@ -168,7 +168,7 @@ with tab1:
                     probs = np.asarray(probs_array).ravel()
                     risk_score = float((1 - probs) * 100)
                     
-                    classes = list(('Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error'))
+                    classes = ("Safe Condition", "Analog Card Issue", "Mechanical Wear", "CPU/Power Error")
                     mode = classes[prediction_idx]
                     
                     # Status logic
@@ -183,17 +183,17 @@ with tab1:
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
                     # Log History
-                    new_log = pd.DataFrame(list(({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action},)))
+                    new_log = pd.DataFrame((({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action},)))
                     st.session_state['fmea_log'] = pd.concat((new_log, st.session_state['fmea_log']), ignore_index=True).head(100)
                     st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
                     # Charts
-                    v1, v2 = st.columns(list((1, 1)))
+                    v1, v2 = st.columns((1, 1))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
                         st.markdown("#### 📊 Failure Mode Probabilities")
-                        fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=list(('#2ecc71', '#f1c40f', '#e67e22', '#e74c3c')))
+                        fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=("#2ecc71", "#f1c40f", "#e67e22", "#e74c3c"))
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
