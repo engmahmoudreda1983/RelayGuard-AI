@@ -36,40 +36,26 @@ st.markdown("""
 # ==========================================
 # 2. Login System (STRICTLY FROM SECRETS)
 # ==========================================
-if 'logged_in' not in st.session_state:
-    st.session_state['logged_in'] = False
+if not hasattr(st.session_state, 'logged_in'):
+    st.session_state.logged_in = False
 
-if 'fmea_log' not in st.session_state:
-    cols_fmea = list()
-    cols_fmea.append('Timestamp')
-    cols_fmea.append('Asset ID')
-    cols_fmea.append('Noise Index')
-    cols_fmea.append('Max Current (A)')
-    cols_fmea.append('Risk (%)')
-    cols_fmea.append('Status')
-    cols_fmea.append('Action')
-    st.session_state['fmea_log'] = pd.DataFrame(columns=cols_fmea)
+if not hasattr(st.session_state, 'fmea_log'):
+    st.session_state.fmea_log = pd.DataFrame(columns=('Timestamp', 'Asset ID', 'Noise Index', 'Max Current (A)', 'Risk (%)', 'Status', 'Action'))
 
-if 'latest_eval' not in st.session_state:
-    st.session_state['latest_eval'] = None
+if not hasattr(st.session_state, 'latest_eval'):
+    st.session_state.latest_eval = None
 
 # STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
 try:
-    VALID_USER = st.secrets["admin_user"]
-    VALID_PASS = st.secrets["admin_pass"]
+    VALID_USER = st.secrets.get("admin_user")
+    VALID_PASS = st.secrets.get("admin_pass")
 except Exception:
     st.error("🚨 SECURITY ERROR: admin_user or admin_pass NOT found in Secrets Dashboard. Access Denied.")
     st.stop()
 
-if not st.session_state['logged_in']:
+if not getattr(st.session_state, 'logged_in'):
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    
-    col_sizes1 = list()
-    col_sizes1.append(1)
-    col_sizes1.append(1.5)
-    col_sizes1.append(1)
-    col1, col2, col3 = st.columns(col_sizes1)
-    
+    col1, col2, col3 = st.columns((1, 1.5, 1))
     with col2:
         st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -78,7 +64,7 @@ if not st.session_state['logged_in']:
             pwd = st.text_input("Password", type="password")
             if st.form_submit_button("Secure Login", use_container_width=True):
                 if user == VALID_USER and pwd == VALID_PASS:
-                    st.session_state['logged_in'] = True
+                    st.session_state.logged_in = True
                     st.rerun()
                 else:
                     st.error("❌ Invalid Username or Password")
@@ -89,125 +75,47 @@ if not st.session_state['logged_in']:
 # ==========================================
 def highlight_fmea(row):
     status = row.get('Status', '')
-    if 'SAFE' in status:
-        res = list()
-        res.append('background-color: #E8F5E9; color: #00A65A; font-weight: bold')
-        return res * len(row)
-    if 'WARNING' in status:
-        res = list()
-        res.append('background-color: #FEF9E7; color: #D35400; font-weight: bold')
-        return res * len(row)
-    if 'DANGER' in status:
-        res = list()
-        res.append('background-color: #FDEDEC; color: #C0392B; font-weight: bold')
-        return res * len(row)
-    res = list()
-    res.append('')
-    return res * len(row)
+    if 'SAFE' in status: return tuple(('background-color: #E8F5E9; color: #00A65A; font-weight: bold',)) * len(row)
+    if 'WARNING' in status: return tuple(('background-color: #FEF9E7; color: #D35400; font-weight: bold',)) * len(row)
+    if 'DANGER' in status: return tuple(('background-color: #FDEDEC; color: #C0392B; font-weight: bold',)) * len(row)
+    return tuple(('',)) * len(row)
 
 def create_gauge(value, title, color):
-    # BULLETPROOF GAUGE: Built piece by piece to prevent markdown deletion bugs
-    r_full = list()
-    r_full.append(0)
-    r_full.append(100)
-
-    r_safe = list()
-    r_safe.append(0)
-    r_safe.append(30)
-
-    r_warn = list()
-    r_warn.append(30)
-    r_warn.append(70)
-
-    r_danger = list()
-    r_danger.append(70)
-    r_danger.append(100)
-
-    ax_dict = dict()
-    ax_dict.update({"range": r_full})
-    ax_dict.update({"tickwidth": 1})
-
-    step1 = dict()
-    step1.update({"range": r_safe})
-    step1.update({"color": "rgba(46, 204, 113, 0.2)"})
-
-    step2 = dict()
-    step2.update({"range": r_warn})
-    step2.update({"color": "rgba(241, 196, 15, 0.2)"})
-
-    step3 = dict()
-    step3.update({"range": r_danger})
-    step3.update({"color": "rgba(231, 76, 60, 0.2)"})
-
-    steps_list = list()
-    steps_list.append(step1)
-    steps_list.append(step2)
-    steps_list.append(step3)
-
-    thresh = dict()
-    thresh.update({"line": {"color": "black", "width": 4}})
-    thresh.update({"thickness": 0.75})
-    thresh.update({"value": value})
-
-    g_dict = dict()
-    g_dict.update({"axis": ax_dict})
-    g_dict.update({"bar": {"color": color}})
-    g_dict.update({"bgcolor": "white"})
-    g_dict.update({"steps": steps_list})
-    g_dict.update({"threshold": thresh})
-
-    num_dict = dict()
-    num_dict.update({"suffix": "%"})
-    num_dict.update({"font": {"size": 30, "color": color}})
-
-    title_dict = dict()
-    title_dict.update({"text": title})
-    title_dict.update({"font": {"size": 18, "color": "#333"}})
-
     fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=value,
-        number=num_dict,
-        title=title_dict,
-        gauge=g_dict
+        mode="gauge+number", value=value,
+        number=dict(suffix="%", font=dict(size=30, color=color)),
+        title=dict(text=title, font=dict(size=18, color='#333')),
+        gauge=dict(
+            axis=dict(range=(0, 100), tickwidth=1),
+            bar=dict(color=color),
+            bgcolor="white",
+            steps=tuple((
+                dict(range=(0, 30), color='rgba(46, 204, 113, 0.2)'),
+                dict(range=(30, 70), color='rgba(241, 196, 15, 0.2)'),
+                dict(range=(70, 100), color='rgba(231, 76, 60, 0.2)')
+            )),
+            threshold=dict(line=dict(color="black", width=4), thickness=0.75, value=value)
+        )
     ))
-    
-    layout_margin = dict()
-    layout_margin.update({"l": 20})
-    layout_margin.update({"r": 20})
-    layout_margin.update({"t": 50})
-    layout_margin.update({"b": 20})
-    
-    fig.update_layout(height=300, margin=layout_margin, paper_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
-col_sizes2 = list()
-col_sizes2.append(10)
-col_sizes2.append(2)
-col_title, col_logout = st.columns(col_sizes2)
-
+col_title, col_logout = st.columns((10, 2))
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Logout 🚪", use_container_width=True):
-        st.session_state['logged_in'] = False
+        st.session_state.logged_in = False
         st.rerun()
 
-tabs_names = list()
-tabs_names.append("🛡️ Diagnostic Dashboard")
-tabs_names.append("📑 FMEA & Risk Logs")
-tabs_names.append("📄 Executive Report")
-tab1, tab2, tab3 = st.tabs(tabs_names)
+tab1, tab2, tab3 = st.tabs(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"))
 
 with tab1:
-    col_sizes3 = list()
-    col_sizes3.append(1)
-    col_sizes3.append(2.5)
-    col_in, col_dash = st.columns(col_sizes3)
+    col_in, col_dash = st.columns((1, 2.5))
     
     with col_in:
         with st.form("relay_input_form"):
@@ -241,38 +149,22 @@ with tab1:
                 try:
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
-                    # Safe Dataframe Construction
-                    feat_data = dict()
-                    noise_list = list()
-                    noise_list.append(noise_index)
-                    feat_data.update({"Pre_Fault_Noise_Index": noise_list})
+                    features = pd.DataFrame(
+                        tuple((tuple((noise_index, fault_current, age_months, alarms_count)),)), 
+                        columns=('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')
+                    )
                     
-                    fault_list = list()
-                    fault_list.append(fault_current)
-                    feat_data.update({"Max_Fault_Current_A": fault_list})
+                    # SAFE SCALAR EXTRACTION: Solves the "0-dimensional arrays" error
+                    pred_raw = model.predict(features)
+                    prediction_idx = int(np.ravel(pred_raw).item(0))
                     
-                    age_list = list()
-                    age_list.append(age_months)
-                    feat_data.update({"Relay_Age_Months": age_list})
+                    probs_array = np.ravel(model.predict_proba(features))
+                    safe_prob = float(probs_array.item(0))
+                    risk_score = float((1.0 - safe_prob) * 100.0)
                     
-                    alarms_list = list()
-                    alarms_list.append(alarms_count)
-                    feat_data.update({"Internal_Alarms_Count": alarms_list})
-                    
-                    features = pd.DataFrame(feat_data)
-                    
-                    prediction_raw = np.asarray(model.predict(features)).ravel()
-                    prediction_idx = int(prediction_raw)
-                    
-                    probs_array = np.asarray(model.predict_proba(features)).ravel()
-                    risk_score = float((1.0 - probs_array) * 100.0)
-                    
-                    classes = list()
-                    classes.append('Safe Condition')
-                    classes.append('Analog Card Issue')
-                    classes.append('Mechanical Wear')
-                    classes.append('CPU/Power Error')
-                    mode = classes[prediction_idx]
+                    classes_tup = ('Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error')
+                    classes_dict = dict(enumerate(classes_tup))
+                    mode = classes_dict.get(prediction_idx)
                     
                     if risk_score < 30:
                         status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
@@ -283,39 +175,19 @@ with tab1:
 
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    # Safe Log Construction
-                    log_data = dict()
-                    log_data.update({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
-                    log_data.update({'Asset ID': asset_id})
-                    log_data.update({'Noise Index': noise_index})
-                    log_data.update({'Max Current (A)': fault_current})
-                    log_data.update({'Risk (%)': round(risk_score, 1)})
-                    log_data.update({'Status': status})
-                    log_data.update({'Action': action})
+                    new_data = {'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action}
+                    new_log = pd.DataFrame(tuple((new_data,)))
                     
-                    log_wrap = list()
-                    log_wrap.append(log_data)
-                    new_log = pd.DataFrame(log_wrap)
-                    
-                    st.session_state['fmea_log'] = pd.concat([new_log, st.session_state['fmea_log']], ignore_index=True).head(100)
-                    st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs_array, 'classes': classes}
+                    st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
+                    st.session_state.latest_eval = dict(id=asset_id, risk=risk_score, status=status, color=color, mode=mode, action=action, probs=probs_array, classes=classes_tup)
 
-                    col_sizes4 = list()
-                    col_sizes4.append(1)
-                    col_sizes4.append(1)
-                    v1, v2 = st.columns(col_sizes4)
-                    
+                    v1, v2 = st.columns((1, 1))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
                         st.markdown("#### 📊 Failure Mode Probabilities")
-                        colors_list = list()
-                        colors_list.append('#2ecc71')
-                        colors_list.append('#f1c40f')
-                        colors_list.append('#e67e22')
-                        colors_list.append('#e74c3c')
-                        
-                        fig_p = px.bar(x=probs_array*100, y=classes, orientation='h', color=classes, color_discrete_sequence=colors_list)
+                        colors_tup = ('#2ecc71', '#f1c40f', '#e67e22', '#e74c3c')
+                        fig_p = px.bar(x=probs_array*100, y=classes_tup, orientation='h', color=classes_tup, color_discrete_sequence=colors_tup)
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
@@ -326,18 +198,19 @@ with tab1:
 
 with tab2:
     st.markdown("### 📑 RPN & FMEA History Registry")
-    if not st.session_state['fmea_log'].empty:
-        st.dataframe(st.session_state['fmea_log'].style.apply(highlight_fmea, axis=1), use_container_width=True, hide_index=True)
+    fmea_df = getattr(st.session_state, 'fmea_log')
+    if not fmea_df.empty:
+        st.dataframe(fmea_df.style.apply(highlight_fmea, axis=1), use_container_width=True, hide_index=True)
     else:
         st.info("No records available. Run an assessment to populate the database.")
 
 with tab3:
-    if st.session_state['latest_eval']:
-        ev = st.session_state['latest_eval']
-        st.markdown(f"### 📄 AI Executive Report - {ev['id']}")
-        st.info(f"**Health Index:** {100-ev['risk']:.1f}% | **Failure Mode:** {ev['mode']}")
-        st.success(f"**Corrective Action:** {ev['action']}")
-        report = f"RELAYGUARD AI DIAGNOSTIC REPORT\nAsset: {ev['id']}\nRisk Score: {ev['risk']:.1f}%\nStatus: {ev['status']}\nPrimary Issue: {ev['mode']}\nRecommendation: {ev['action']}"
-        st.download_button("📥 Download Full Report (TXT)", data=report, file_name=f"RelayGuard_{ev['id']}.txt", use_container_width=True)
+    eval_data = getattr(st.session_state, 'latest_eval')
+    if eval_data:
+        st.markdown(f"### 📄 AI Executive Report - {eval_data.get('id')}")
+        st.info(f"**Health Index:** {100-eval_data.get('risk'):.1f}% | **Failure Mode:** {eval_data.get('mode')}")
+        st.success(f"**Corrective Action:** {eval_data.get('action')}")
+        report = f"RELAYGUARD AI DIAGNOSTIC REPORT\nAsset: {eval_data.get('id')}\nRisk Score: {eval_data.get('risk'):.1f}%\nStatus: {eval_data.get('status')}\nPrimary Issue: {eval_data.get('mode')}\nRecommendation: {eval_data.get('action')}"
+        st.download_button("📥 Download Full Report (TXT)", data=report, file_name=f"RelayGuard_{eval_data.get('id')}.txt", use_container_width=True)
     else:
         st.info("💡 Run an evaluation to generate a report.")
