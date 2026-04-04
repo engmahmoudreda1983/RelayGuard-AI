@@ -55,7 +55,7 @@ except KeyError:
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns((1, 1.5, 1))
+    col1, col2, col3 = st.columns(list((1, 1.5, 1)))
     with col2:
         st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -81,19 +81,24 @@ def highlight_fmea(row):
     return list(('',)) * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED: Used tuples () instead of square brackets to prevent parsing deletion
+    # BULLETPROOF FIX: Using strict variables to prevent Markdown from deleting the arrays
+    val_0 = 0
+    val_30 = 30
+    val_70 = 70
+    val_100 = 100
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
         title={'text': title, 'font': {'size': 18, 'color': '#333'}},
         gauge={
-            'axis': {'range': (0, 100), 'tickwidth': 1},
+            'axis': {'range': list((val_0, val_100)), 'tickwidth': 1},
             'bar': {'color': color},
             'bgcolor': "white",
             'steps': [
-                {'range': (0, 30), 'color': 'rgba(46, 204, 113, 0.2)'}, 
-                {'range': (30, 70), 'color': 'rgba(241, 196, 15, 0.2)'}, 
-                {'range': (70, 100), 'color': 'rgba(231, 76, 60, 0.2)'}
+                {'range': list((val_0, val_30)), 'color': 'rgba(46, 204, 113, 0.2)'}, 
+                {'range': list((val_30, val_70)), 'color': 'rgba(241, 196, 15, 0.2)'}, 
+                {'range': list((val_70, val_100)), 'color': 'rgba(231, 76, 60, 0.2)'}
             ],
             'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': value}
         }))
@@ -103,8 +108,7 @@ def create_gauge(value, title, color):
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
-# FIXED: Used tuple for sizing
-col_title, col_logout = st.columns((10, 2))
+col_title, col_logout = st.columns(list((10, 2)))
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
@@ -113,10 +117,10 @@ with col_logout:
         st.session_state['logged_in'] = False
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(["🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"])
+tab1, tab2, tab3 = st.tabs(list(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report")))
 
 with tab1:
-    col_in, col_dash = st.columns((1, 2.5))
+    col_in, col_dash = st.columns(list((1, 2.5)))
     
     with col_in:
         with st.form("relay_input_form"):
@@ -152,10 +156,10 @@ with tab1:
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
                     # Prepare Input DataFrame
-                    features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
-                                            columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
+                    features = pd.DataFrame(list(((noise_index, fault_current, age_months, alarms_count),)), 
+                                            columns=list(('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')))
                     
-                    # Extract scalar from prediction array safely
+                    # Prediction Calculation
                     prediction_raw = model.predict(features)
                     prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
@@ -164,7 +168,7 @@ with tab1:
                     probs = np.asarray(probs_array).ravel()
                     risk_score = float((1 - probs) * 100)
                     
-                    classes = ['Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error']
+                    classes = list(('Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error'))
                     mode = classes[prediction_idx]
                     
                     # Status logic
@@ -179,25 +183,17 @@ with tab1:
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
                     # Log History
-                    new_log = pd.DataFrame([{
-                        'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        'Asset ID': asset_id,
-                        'Noise Index': noise_index,
-                        'Max Current (A)': fault_current,
-                        'Risk (%)': round(risk_score, 1),
-                        'Status': status,
-                        'Action': action
-                    }])
-                    st.session_state['fmea_log'] = pd.concat([new_log, st.session_state['fmea_log']], ignore_index=True).head(100)
+                    new_log = pd.DataFrame(list(({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action},)))
+                    st.session_state['fmea_log'] = pd.concat((new_log, st.session_state['fmea_log']), ignore_index=True).head(100)
                     st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
                     # Charts
-                    v1, v2 = st.columns((1, 1))
+                    v1, v2 = st.columns(list((1, 1)))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
                         st.markdown("#### 📊 Failure Mode Probabilities")
-                        fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=['#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'])
+                        fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=list(('#2ecc71', '#f1c40f', '#e67e22', '#e74c3c')))
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
