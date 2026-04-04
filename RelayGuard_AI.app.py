@@ -81,18 +81,29 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
+    # BULLETPROOF FIX: Defining ranges as variables so they don't get deleted by text formatters
+    zero_val = 0
+    thirty_val = 30
+    seventy_val = 70
+    hundred_val = 100
+    
+    full_range = (zero_val, hundred_val)
+    safe_range = (zero_val, thirty_val)
+    warn_range = (thirty_val, seventy_val)
+    danger_range = (seventy_val, hundred_val)
+
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
         title={'text': title, 'font': {'size': 18, 'color': '#333'}},
         gauge={
-            'axis': {'range':, 'tickwidth': 1},
+            'axis': {'range': full_range, 'tickwidth': 1},
             'bar': {'color': color},
             'bgcolor': "white",
             'steps': [
-                {'range':, 'color': 'rgba(46, 204, 113, 0.2)'}, 
-                {'range':, 'color': 'rgba(241, 196, 15, 0.2)'}, 
-                {'range':, 'color': 'rgba(231, 76, 60, 0.2)'}
+                {'range': safe_range, 'color': 'rgba(46, 204, 113, 0.2)'}, 
+                {'range': warn_range, 'color': 'rgba(241, 196, 15, 0.2)'}, 
+                {'range': danger_range, 'color': 'rgba(231, 76, 60, 0.2)'}
             ],
             'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': value}
         }))
@@ -121,10 +132,22 @@ with tab1:
             st.markdown("### 📥 Telemetry Data")
             asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-001")
             
-            noise_index = st.number_input("Pre-Fault Noise Index", value=0.05, step=0.01)
-            fault_current = st.number_input("Max Fault Current (A)", value=1500, step=100)
-            age_months = st.number_input("Relay Age (Months)", value=192, step=12)
-            alarms_count = st.number_input("Internal Alarms Count", value=0, step=1)
+            noise_index = st.number_input(
+                "Pre-Fault Noise Index", value=0.05, step=0.01,
+                help="Signal fluctuations before the event. High noise (>1.5) indicates analog card issues."
+            )
+            fault_current = st.number_input(
+                "Max Fault Current (A)", value=1500, step=100,
+                help="Maximum recorded current during the fault event."
+            )
+            age_months = st.number_input(
+                "Relay Age (Months)", value=192, step=12,
+                help="Operating age of the relay. >120 months indicates wear-out phase."
+            )
+            alarms_count = st.number_input(
+                "Internal Alarms Count", value=0, step=1,
+                help="Count of internal warnings or self-test failure logs."
+            )
             
             run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
 
@@ -134,28 +157,26 @@ with tab1:
                 st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing from the directory.")
             else:
                 try:
-                    # 1. Load Model
+                    # Load AI Model
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
-                    # 2. Input DataFrame
-                    features = pd.DataFrame(
-                        [[noise_index, fault_current, age_months, alarms_count]], 
-                        columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count']
-                    )
+                    # Prepare Input DataFrame
+                    features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
+                                            columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
                     
-                    # 3. FIX: Safe Scalar Extraction
+                    # Safe Extraction of Prediction
                     prediction_raw = model.predict(features)
-                    prediction_idx = int(prediction_raw)
+                    prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
-                    # 4. FIX: Safe Probability Math
+                    # Safe Probability Calculation
                     probs_array = model.predict_proba(features)
-                    probs = probs_array
+                    probs = np.asarray(probs_array).ravel()
                     risk_score = float((1.0 - probs) * 100.0)
                     
                     classes = ['Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error']
                     mode = classes[prediction_idx]
                     
-                    # 5. FMEA Condition Logic
+                    # Status logic
                     if risk_score < 30:
                         status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
                     elif risk_score < 70:
@@ -163,9 +184,10 @@ with tab1:
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
 
+                    # Dashboard Header Result
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    # 6. Log Update
+                    # Log History
                     new_log = pd.DataFrame([{
                         'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Asset ID': asset_id,
@@ -178,7 +200,7 @@ with tab1:
                     st.session_state['fmea_log'] = pd.concat([new_log, st.session_state['fmea_log']], ignore_index=True).head(100)
                     st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
-                    # 7. Charts
+                    # Charts
                     v1, v2 = st.columns()
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
