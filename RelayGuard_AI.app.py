@@ -212,40 +212,32 @@ with tab1:
                     final_risk = min(100.0, ai_base_risk + total_penalty)
                     
                     # 3. RECALIBRATE PROBABILITIES FOR CONSISTENCY
-                    final_probs_list = list(base_probs_list) # Copy original
+                    final_probs_list = list(base_probs_list) 
                     if total_penalty > 0 and 0 in actual_classes_list:
                         safe_idx = actual_classes_list.index(0)
-                        # Reduce safe probability based on the total penalty
                         penalty_as_prob = total_penalty / 100.0
                         new_safe_prob = max(0.0, base_probs_list[safe_idx] - penalty_as_prob)
                         final_probs_list[safe_idx] = new_safe_prob
                         
-                        # Distribute the extracted penalty to the highest predicted fault or a heuristic fault
                         diff = base_probs_list[safe_idx] - new_safe_prob
                         if diff > 0:
-                            # If age is the dominant penalty, assign the risk there (or mechanical wear)
-                            target_idx = 2 # Default to Mechanical Wear for physical stress
+                            target_idx = 2 
                             if age_penalty > current_penalty and age_penalty > alarm_penalty:
-                                # We'll just push it to mechanical wear as a proxy for aging
                                 target_idx = actual_classes_list.index(2) if 2 in actual_classes_list else 1
                             elif alarm_penalty > current_penalty:
                                 target_idx = actual_classes_list.index(3) if 3 in actual_classes_list else 1
-                            
                             final_probs_list[target_idx] += diff
                     
-                    # Normalize to ensure sum is 1.0 just in case
                     prob_sum = sum(final_probs_list)
                     if prob_sum > 0:
                         final_probs_list = [p/prob_sum for p in final_probs_list]
                         
                     ai_confidence = float(max(final_probs_list)) * 100.0
                     
-                    # Determine Mode based on the newly calibrated probabilities
                     highest_prob_idx = final_probs_list.index(max(final_probs_list))
                     best_class_val = actual_classes_list[highest_prob_idx]
                     mode = classes_dict.get(best_class_val, "Unknown Error")
                     
-                    # Fine-tune the text if penalties heavily overrode the AI
                     if total_penalty > ai_base_risk and mode == 'Safe Condition' and final_risk >= 30:
                         if age_penalty > current_penalty:
                             mode = "Age Degradation (Heuristic)"
@@ -262,7 +254,6 @@ with tab1:
                     plot_colors = list()
                     for c in actual_classes_list:
                         class_name = classes_dict.get(int(c), "Unknown Error")
-                        # If we used the custom heuristic name, ensure it maps to the plot
                         if class_name == 'Mechanical Wear' and 'Age' in mode:
                             plot_classes.append("Age/Stress Degradation")
                         else:
@@ -416,7 +407,6 @@ with tab3:
             
             st.markdown(f"**FMEA RPN (Risk Priority Number):** `{eval_data.get('rpn_score')}/1000` ({eval_data.get('rpn_level')} Severity)")
             
-            # CLEAN REASONING TEXT
             st.markdown("#### 🧠 Expert System Reasoning")
             st.markdown(f"<div class='report-reasoning'>{eval_data.get('reasoning')}</div>", unsafe_allow_html=True)
 
@@ -425,34 +415,50 @@ with tab3:
             radar_fig = create_radar(eval_data.get('probs'), eval_data.get('classes'), rep_color)
             st.plotly_chart(radar_fig, use_container_width=True)
             
-            st.markdown("#### 📈 Predictive Risk Trajectory (Simulated)")
-            time_labels = tuple(('M-3', 'M-2', 'M-1', 'Current', 'M+1 (Proj)', 'M+2 (Proj)'))
+            # --- THE NEW CHART: ACTUAL HISTORICAL TREND ---
+            st.markdown("#### 📈 Actual Historical Risk Trend")
             
-            v1 = max(0.0, risk_val - 12.0)
-            v2 = max(0.0, risk_val - 5.0)
-            v3 = max(0.0, risk_val - 1.5)
-            v4 = risk_val
-            v5 = min(100.0, risk_val + 8.0)
-            v6 = min(100.0, risk_val + 20.0)
+            # Safe Extaction and sorting of historical data
+            log_df = getattr(st.session_state, 'fmea_log')
+            curr_id = eval_data.get('id')
+            hist_records = log_df.to_dict(orient='records')
             
-            trend_vals = tuple((v1, v2, v3, v4, v5, v6))
+            time_vals = list()
+            risk_vals = list()
+            status_vals = list()
             
-            trend_fig = go.Figure()
-            trend_scatter = go.Scatter(
-                x=time_labels, 
-                y=trend_vals, 
-                mode='lines+markers',
-                line=dict(color=rep_color, width=4),
-                marker=dict(size=10)
-            )
-            trend_fig.add_trace(trend_scatter)
-            trend_fig.update_layout(
-                height=250, 
-                margin=dict(l=0, r=0, t=30, b=0), 
-                yaxis_title="Risk (%)", 
-                xaxis_title="Timeline"
-            )
-            st.plotly_chart(trend_fig, use_container_width=True)
+            for rec in hist_records:
+                if rec.get('Asset ID') == curr_id:
+                    time_vals.append(rec.get('Timestamp'))
+                    risk_vals.append(rec.get('Risk (%)'))
+                    status_vals.append(rec.get('Status').replace("🟢", "").replace("🟡", "").replace("🔴", "").strip())
+            
+            # Reverse lists to ensure chronological order (oldest to newest)
+            time_vals.reverse()
+            risk_vals.reverse()
+            status_vals.reverse()
+            
+            if len(time_vals) > 0:
+                trend_fig = go.Figure()
+                trend_scatter = go.Scatter(
+                    x=tuple(time_vals), 
+                    y=tuple(risk_vals), 
+                    mode='lines+markers',
+                    line=dict(color=rep_color, width=3),
+                    marker=dict(size=8, color=rep_color),
+                    text=tuple(status_vals),
+                    hovertemplate="Time: %{x}<br>Risk: %{y}%<br>Status: %{text}<extra></extra>"
+                )
+                trend_fig.add_trace(trend_scatter)
+                trend_fig.update_layout(
+                    height=250, 
+                    margin=dict(l=0, r=0, t=30, b=0), 
+                    yaxis_title="Risk (%)", 
+                    xaxis_title="Historical Assessments"
+                )
+                st.plotly_chart(trend_fig, use_container_width=True)
+            else:
+                st.info("📊 Run at least one assessment to view the historical trend.")
             
         st.markdown("---")
         report_txt = f"RELAYGUARD HYBRID AI DIAGNOSTIC REPORT\n"
