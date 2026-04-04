@@ -1,20 +1,21 @@
-# Core Streamlit library
+# Core Framework
 streamlit
 
-# Data manipulation and math
+# Data Processing & Math
+# Fixed version to match your trained model environment
 pandas
 numpy
 
 # Visualization
 plotly
 
-# Machine Learning & Model Loading
-# We fix the version to 1.6.1 to match your trained model and avoid TypeErrors
+# Machine Learning & Model Persistence
+# Critical: Use this version to match the model trained in Colab
 scikit-learn==1.6.1
 joblib
 
-# Image handling (if needed for logos)
-Pillow
-
-# For handling Excel files
+# File Handling for Excel/CSV
 openpyxl
+
+# Optional: For any image processing in the dashboard
+Pillow
