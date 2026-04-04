@@ -97,7 +97,7 @@ def create_gauge(value, title, color):
             threshold=dict(line=dict(color="black", width=4), thickness=0.75, value=value)
         )
     ))
-    fig.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(height=280, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
 # ==========================================
@@ -122,22 +122,10 @@ with tab1:
             st.markdown("### 📥 Telemetry Data")
             asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-001")
             
-            noise_index = st.number_input(
-                "Pre-Fault Noise Index", value=0.05, step=0.01,
-                help="Signal fluctuations before the event. High noise (>1.5) indicates analog card issues."
-            )
-            fault_current = st.number_input(
-                "Max Fault Current (A)", value=1500, step=100,
-                help="Maximum recorded current during the fault event."
-            )
-            age_months = st.number_input(
-                "Relay Age (Months)", value=192, step=12,
-                help="Operating age of the relay. >120 months indicates wear-out phase."
-            )
-            alarms_count = st.number_input(
-                "Internal Alarms Count", value=0, step=1,
-                help="Count of internal warnings or self-test failure logs."
-            )
+            noise_index = st.number_input("Pre-Fault Noise Index", value=0.05, step=0.01)
+            fault_current = st.number_input("Max Fault Current (A)", value=1500, step=100)
+            age_months = st.number_input("Relay Age (Months)", value=192, step=12)
+            alarms_count = st.number_input("Internal Alarms Count", value=0, step=1)
             
             run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
 
@@ -147,24 +135,53 @@ with tab1:
                 st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing from the directory.")
             else:
                 try:
+                    # 1. Load Model
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
+                    # 2. Extract Data Safely
                     features = pd.DataFrame(
                         tuple((tuple((noise_index, fault_current, age_months, alarms_count)),)), 
                         columns=('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')
                     )
                     
-                    # SAFE SCALAR EXTRACTION: Solves the "0-dimensional arrays" error
+                    # 3. Model Prediction (Safe 0-dimensional fix)
                     pred_raw = model.predict(features)
-                    prediction_idx = int(np.ravel(pred_raw).item(0))
+                    prediction_idx = int(np.ravel(pred_raw))
                     
                     probs_array = np.ravel(model.predict_proba(features))
-                    safe_prob = float(probs_array.item(0))
-                    risk_score = float((1.0 - safe_prob) * 100.0)
                     
-                    classes_tup = ('Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error')
-                    classes_dict = dict(enumerate(classes_tup))
-                    mode = classes_dict.get(prediction_idx)
+                    # NEW: AI Confidence
+                    ai_confidence = float(np.max(probs_array)) * 100.0
+                    
+                    classes_dict = dict()
+                    classes_dict.update({0: 'Safe Condition'})
+                    classes_dict.update({1: 'Analog Card Issue'})
+                    classes_dict.update({2: 'Mechanical Wear'})
+                    classes_dict.update({3: 'CPU/Power Error'})
+                    
+                    colors_dict = dict()
+                    colors_dict.update({0: '#2ecc71'})
+                    colors_dict.update({1: '#f1c40f'})
+                    colors_dict.update({2: '#e67e22'})
+                    colors_dict.update({3: '#e74c3c'})
+                    
+                    # 4. FIX: Dynamic classes mapping matching Model output length
+                    actual_classes = getattr(model, 'classes_', tuple(range(len(probs_array))))
+                    plot_classes = list()
+                    plot_colors = list()
+                    for c in actual_classes:
+                        plot_classes.append(classes_dict.get(int(c), f"Class {c}"))
+                        plot_colors.append(colors_dict.get(int(c), "#333333"))
+                        
+                    # Calculate Risk safely
+                    if 0 in actual_classes:
+                        safe_idx_in_array = list(actual_classes).index(0)
+                        safe_prob = float(probs_array[safe_idx_in_array])
+                    else:
+                        safe_prob = float(probs_array)
+                        
+                    risk_score = float((1.0 - safe_prob) * 100.0)
+                    mode = classes_dict.get(prediction_idx, "Unknown Error")
                     
                     if risk_score < 30:
                         status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
@@ -173,23 +190,49 @@ with tab1:
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
 
-                    st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
+                    # --- NEW: KEY NUMBERS METRICS ---
+                    m1, m2, m3, m4 = st.columns((1, 1, 1, 1))
+                    m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
+                    m2.metric("⚠️ Failure Risk", f"{risk_score:.1f}%")
+                    m3.metric("📈 Status", status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip())
+                    m4.metric("⚙️ Primary Issue", mode.split())
+
+                    st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center; margin-top: 10px; margin-bottom: 10px;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
+                    # Log History
                     new_data = {'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action}
                     new_log = pd.DataFrame(tuple((new_data,)))
-                    
                     st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
-                    st.session_state.latest_eval = dict(id=asset_id, risk=risk_score, status=status, color=color, mode=mode, action=action, probs=probs_array, classes=classes_tup)
+                    st.session_state.latest_eval = dict(id=asset_id, risk=risk_score, status=status, color=color, mode=mode, action=action)
 
+                    # Charts
                     v1, v2 = st.columns((1, 1))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
                         st.markdown("#### 📊 Failure Mode Probabilities")
-                        colors_tup = ('#2ecc71', '#f1c40f', '#e67e22', '#e74c3c')
-                        fig_p = px.bar(x=probs_array*100, y=classes_tup, orientation='h', color=classes_tup, color_discrete_sequence=colors_tup)
+                        fig_p = px.bar(x=probs_array*100, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
+
+                    # --- NEW: DYNAMIC VARIABLES BAR CHART ---
+                    st.markdown("---")
+                    st.markdown("#### 📉 Dynamic Input Variables Comparison")
+                    var_names_all = ("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count")
+                    var_vals_all = (noise_index, fault_current, age_months, alarms_count)
+                    var_colors = ('#9b59b6', '#e74c3c', '#34495e', '#f39c12')
+                    
+                    fig_vars = px.bar(
+                        x=var_vals_all, 
+                        y=var_names_all, 
+                        orientation='h', 
+                        text=var_vals_all,
+                        color=var_names_all,
+                        color_discrete_sequence=var_colors
+                    )
+                    # Log scale applied to X-axis because of large difference between Current (1500) and Noise (0.05)
+                    fig_vars.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_type="log", xaxis_title="Value (Log Scale)")
+                    st.plotly_chart(fig_vars, use_container_width=True)
 
                 except Exception as e:
                     st.error(f"Analysis failed: {str(e)}")
