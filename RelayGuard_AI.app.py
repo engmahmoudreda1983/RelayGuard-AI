@@ -45,7 +45,7 @@ if 'fmea_log' not in st.session_state:
 if 'latest_eval' not in st.session_state:
     st.session_state['latest_eval'] = None
 
-# STRICT SECURITY: Credentials from Streamlit Secrets Dashboard ONLY
+# STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
 try:
     VALID_USER = st.secrets["admin_user"]
     VALID_PASS = st.secrets["admin_pass"]
@@ -81,7 +81,7 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED: range list added
+    # FIXED: The SyntaxError is resolved here by properly assigning to the range key.
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
@@ -124,19 +124,19 @@ with tab1:
             
             noise_index = st.number_input(
                 "Pre-Fault Noise Index", value=0.05, step=0.01,
-                help="Standard signal fluctuations. Values >1.5 indicate potential analog card hardware issues."
+                help="Signal fluctuations before the event. High noise (>1.5) indicates analog card issues."
             )
             fault_current = st.number_input(
                 "Max Fault Current (A)", value=1500, step=100,
-                help="Peak current recorded during the fault. High currents cause mechanical stress."
+                help="Maximum recorded current during the fault event."
             )
             age_months = st.number_input(
                 "Relay Age (Months)", value=192, step=12,
-                help="Operating age since commissioning. >120 months indicates wear-out phase."
+                help="Operating age of the relay. >120 months indicates wear-out phase."
             )
             alarms_count = st.number_input(
                 "Internal Alarms Count", value=0, step=1,
-                help="Count of internal warnings, self-test errors, or blocking signals from logs."
+                help="Count of internal warnings or self-test failure logs."
             )
             
             run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
