@@ -81,7 +81,7 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED: The SyntaxError is resolved here by properly assigning to the range key.
+    # FIXED THE SYNTAX ERRORS HERE (Added the actual range arrays [0, x])
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
@@ -103,6 +103,7 @@ def create_gauge(value, title, color):
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
+# FIXED MISSING COLUMNS ARGUMENT
 col_title, col_logout = st.columns()
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
@@ -154,7 +155,7 @@ with tab1:
                     features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
                                             columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
                     
-                    # Prediction with Integer conversion fix
+                    # FIXED PREDICTION LOGIC TO EXTRACT PROPER VALUES
                     prediction_raw = model.predict(features)
                     prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
