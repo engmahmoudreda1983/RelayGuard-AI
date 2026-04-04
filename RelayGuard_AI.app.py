@@ -40,24 +40,24 @@ if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
 
 if 'fmea_log' not in st.session_state:
-    st.session_state['fmea_log'] = pd.DataFrame(columns=['Timestamp', 'Asset ID', 'Noise Index', 'Fault Current (A)', 'Overall Risk (%)', 'Status', 'RPN Level', 'Action Required'])
+    st.session_state['fmea_log'] = pd.DataFrame(columns=['Timestamp', 'Asset ID', 'Noise Index', 'Max Current (A)', 'Risk (%)', 'Status', 'Action'])
 
 if 'latest_eval' not in st.session_state:
     st.session_state['latest_eval'] = None
 
-# Access credentials ONLY from Streamlit Secrets Dashboard
+# STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
 try:
     VALID_USER = st.secrets["admin_user"]
     VALID_PASS = st.secrets["admin_pass"]
 except KeyError:
-    st.error("🚨 SECURITY ERROR: admin_user or admin_pass NOT found in Secrets. Access Denied.")
+    st.error("🚨 SECURITY ERROR: admin_user or admin_pass NOT found in Secrets Dashboard. Access Denied.")
     st.stop()
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.5, 1])
     with col2:
-        st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Protection Analytics Portal</p></div>", unsafe_allow_html=True)
+        st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
             st.warning("🔒 Restricted Access. Authorized Personnel Only.")
             user = st.text_input("Username")
@@ -81,7 +81,7 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED SYNTAX ERROR: Range value added
+    # FIXED: Range now correctly defined as
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
@@ -105,14 +105,14 @@ def create_gauge(value, title, color):
 # ==========================================
 col_title, col_logout = st.columns()
 with col_title:
-    st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Assessment Dashboard</h2></div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("Logout 🚪", use_container_width=True):
         st.session_state['logged_in'] = False
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(["🛡️ Live Assessment", "📑 FMEA & Risk Logs", "📄 AI Executive Report"])
+tab1, tab2, tab3 = st.tabs(["🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"])
 
 with tab1:
     col_in, col_dash = st.columns([1, 2.5])
@@ -120,11 +120,11 @@ with tab1:
     with col_in:
         with st.form("relay_input_form"):
             st.markdown("### 📥 Telemetry Data")
-            asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-UNIT-01")
+            asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-001")
             
             noise_index = st.number_input(
                 "Pre-Fault Noise Index", value=0.05, step=0.01,
-                help="Signal fluctuations before the fault event. High noise (>1.5) indicates analog card issues."
+                help="Signal fluctuations before the event. High noise (>1.5) indicates analog card issues."
             )
             fault_current = st.number_input(
                 "Max Fault Current (A)", value=1500, step=100,
@@ -136,90 +136,86 @@ with tab1:
             )
             alarms_count = st.number_input(
                 "Internal Alarms Count", value=0, step=1,
-                help="Count of internal warnings or self-test failure logs."
+                help="Count of internal self-test failure logs or blockings."
             )
             
-            run_btn = st.form_submit_button("🔍 Evaluate Health", use_container_width=True, type="primary")
+            run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
 
     with col_dash:
         if run_btn:
-            try:
-                # Load Model
-                model = joblib.load('Final_Relay_AI_Model.pkl')
-                
-                # Prepare Input
-                features = np.array([[noise_index, fault_current, age_months, alarms_count]])
-                
-                # Prediction with Integer Safety Fix
-                prediction_raw = model.predict(features)
-                prediction_idx = int(np.ravel(prediction_raw))
-                
-                # Probability & Risk Calculation
-                probs = model.predict_proba(features)
-                risk_score = (1 - probs) * 100
-                
-                classes = ['Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error']
-                identified_mode = classes[prediction_idx]
-                
-                # Risk Logic (FMEA Mapping)
-                if risk_score < 30:
-                    status, color, rpn, action = "🟢 SAFE", "#2ecc71", "Low", "No immediate action. Maintain TBM schedule."
-                elif risk_score < 70:
-                    status, color, rpn, action = "🟡 WARNING", "#f1c40f", "Medium", f"Schedule CBM inspection focusing on {identified_mode}."
-                else:
-                    status, color, rpn, action = "🔴 DANGER", "#e74c3c", "Critical", f"Immediate replacement recommended: {identified_mode}."
+            if not os.path.exists('Final_Relay_AI_Model.pkl'):
+                st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing from the directory.")
+            else:
+                try:
+                    # Load AI Model
+                    model = joblib.load('Final_Relay_AI_Model.pkl')
+                    
+                    # Process Input
+                    features = np.array([[noise_index, fault_current, age_months, alarms_count]])
+                    
+                    # Predication with Array Flattening for Scalar Integer extraction
+                    prediction_raw = model.predict(features)
+                    prediction_idx = int(np.asarray(prediction_raw).ravel())
+                    
+                    # Risk and Probs
+                    probs = model.predict_proba(features)
+                    risk_score = (1 - probs) * 100
+                    
+                    classes = ['Safe Condition', 'Analog Card Issue', 'Mechanical Wear', 'CPU/Power Error']
+                    mode = classes[prediction_idx]
+                    
+                    # FMEA Condition Logic
+                    if risk_score < 30:
+                        status, color, rpn, action = "🟢 SAFE", "#2ecc71", "Low", "Normal operation. Follow TBM."
+                    elif risk_score < 70:
+                        status, color, rpn, action = "🟡 WARNING", "#f1c40f", "Medium", f"Schedule CBM for {mode}."
+                    else:
+                        status, color, rpn, action = "🔴 DANGER", "#e74c3c", "Critical", f"Immediate replacement: {mode}."
 
-                # Update Logs
-                new_entry = pd.DataFrame([{
-                    'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    'Asset ID': asset_id,
-                    'Noise Index': noise_index,
-                    'Fault Current (A)': fault_current,
-                    'Overall Risk (%)': round(risk_score, 1),
-                    'Status': status,
-                    'RPN Level': rpn,
-                    'Action Required': action
-                }])
-                st.session_state['fmea_log'] = pd.concat([new_entry, st.session_state['fmea_log']], ignore_index=True).head(50)
-                st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': identified_mode, 'action': action, 'rpn': rpn, 'probs': probs}
+                    # Visualization
+                    st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
+                    
+                    # Update History
+                    new_log = pd.DataFrame([{
+                        'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        'Asset ID': asset_id,
+                        'Noise Index': noise_index,
+                        'Max Current (A)': fault_current,
+                        'Risk (%)': round(risk_score, 1),
+                        'Status': status,
+                        'Action': action
+                    }])
+                    st.session_state['fmea_log'] = pd.concat([new_log, st.session_state['fmea_log']], ignore_index=True).head(100)
+                    st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
-                # Dashboard Display
-                st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center;'><h2 style='color:{color}; margin:0;'>{status}: {identified_mode}</h2></div>", unsafe_allow_html=True)
-                
-                v_col1, v_col2 = st.columns(2)
-                with v_col1:
-                    st.plotly_chart(create_gauge(risk_score, "Total Failure Risk Score", color), use_container_width=True)
-                with v_col2:
-                    st.markdown("#### 📈 Probability Analysis")
-                    fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=['#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'])
-                    fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0))
-                    st.plotly_chart(fig_p, use_container_width=True)
+                    v1, v2 = st.columns(2)
+                    with v1:
+                        st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
+                    with v2:
+                        st.markdown("#### 📊 Failure Probabilities")
+                        fig_p = px.bar(x=probs*100, y=classes, orientation='h', color=classes, color_discrete_sequence=['#2ecc71', '#f1c40f', '#e67e22', '#e74c3c'])
+                        fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0))
+                        st.plotly_chart(fig_p, use_container_width=True)
 
-            except Exception as e:
-                st.error(f"Analysis failed. Please ensure 'Final_Relay_AI_Model.pkl' is uploaded. Error: {str(e)}")
+                except Exception as e:
+                    st.error(f"Analysis failed: {str(e)}")
+        else:
+            st.info("💡 Please input telemetry data and click 'Run AI Analysis' to start.")
 
 with tab2:
     st.markdown("### 📑 RPN & FMEA History Registry")
     if not st.session_state['fmea_log'].empty:
         st.dataframe(st.session_state['fmea_log'].style.apply(highlight_fmea, axis=1), use_container_width=True, hide_index=True)
     else:
-        st.info("No logs available. Run an assessment to populate the database.")
+        st.info("No records available.")
 
 with tab3:
     if st.session_state['latest_eval']:
         ev = st.session_state['latest_eval']
         st.markdown(f"### 📄 AI Executive Report - {ev['id']}")
-        st.markdown(f"**Generated on:** {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        
-        rep_col1, rep_col2 = st.columns(2)
-        with rep_col1:
-            st.info(f"**Health Index:** {100-ev['risk']:.1f}%")
-            st.warning(f"**Risk Severity (RPN):** {ev['rpn']}")
-        with rep_col2:
-            st.error(f"**Identified Issue:** {ev['mode']}")
-            st.success(f"**Corrective Action:** {ev['action']}")
-            
-        report_txt = f"RELAYGUARD AI DIAGNOSTIC REPORT\nAsset: {ev['id']}\nFailure Risk: {ev['risk']:.1f}%\nStatus: {ev['status']}\nPrimary Failure Mode: {ev['mode']}\nRecommendation: {ev['action']}"
-        st.download_button("📥 Download Summary Report (TXT)", data=report_txt, file_name=f"RelayGuard_Report_{ev['id']}.txt", use_container_width=True)
+        st.info(f"**Health Index:** {100-ev['risk']:.1f}% | **Failure Mode:** {ev['mode']}")
+        st.success(f"**Action Plan:** {ev['action']}")
+        report = f"Asset: {ev['id']}\nRisk Score: {ev['risk']:.1f}%\nPrimary Issue: {ev['mode']}\nRecommendation: {ev['action']}"
+        st.download_button("📥 Download Report (TXT)", data=report, file_name=f"RelayGuard_{ev['id']}.txt", use_container_width=True)
     else:
-        st.info("💡 Run an evaluation to generate a report.")
+        st.info("Run an evaluation to generate a report.")
