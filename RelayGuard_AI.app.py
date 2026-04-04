@@ -1,6 +1,6 @@
 # ==============================================================================
 # © 2026 PowerGuard AI by Eng. Mahmoud Reda Ibrahim. All rights reserved.
-# Proprietary and Confidential. Standalone RelayGuard AI Edition.
+# Proprietary and Confidential. Hybrid AI Expert System Edition.
 # ==============================================================================
 
 import streamlit as st
@@ -57,7 +57,7 @@ if not hasattr(st.session_state, 'fmea_log'):
 if not hasattr(st.session_state, 'latest_eval'):
     st.session_state.latest_eval = None
 
-# STRICT SECURITY: Access credentials ONLY from Streamlit Secrets Dashboard
+# STRICT SECURITY
 try:
     VALID_USER = st.secrets.get("admin_user")
     VALID_PASS = st.secrets.get("admin_pass")
@@ -69,7 +69,7 @@ if not getattr(st.session_state, 'logged_in'):
     st.markdown("<br><br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(tuple((1, 1.5, 1)))
     with col2:
-        st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
+        st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Hybrid AI Expert System</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
             st.warning("🔒 Restricted Access. Authorized Personnel Only.")
             user = st.text_input("Username")
@@ -128,13 +128,6 @@ def create_radar(probs_list, classes_tup, color):
     )
     return fig
 
-# AI Reasoning Dictionary
-ai_reasons = dict()
-ai_reasons.update({'Safe Condition': 'All telemetry parameters (Noise, Current, Age, Alarms) are within normal operational thresholds. The asset is operating as expected with no significant degradation detected.'})
-ai_reasons.update({'Analog Card Issue': 'An elevated Pre-Fault Noise Index is the primary indicator. The Random Forest model heavily weights this feature as it historically correlates with degradation in the analog-to-digital conversion circuits.'})
-ai_reasons.update({'Mechanical Wear': 'The combination of operating age and exposure to high fault currents indicates severe mechanical stress and degradation on the relay internal contacts and moving parts.'})
-ai_reasons.update({'CPU/Power Error': 'The presence of internal alarms strongly suggests a logic board malfunction, memory failure, or power supply instability within the unit.'})
-
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
@@ -163,23 +156,23 @@ with tab1:
             )
             fault_current = st.number_input(
                 "Max Fault Current (A)", value=1500, step=100,
-                help="❓ The peak current recorded during a fault event. Very high currents cause extreme mechanical stress on the relay."
+                help="❓ The peak current recorded. Values > 5000A start adding physical stress penalties to the final risk score."
             )
             age_months = st.number_input(
                 "Relay Age (Months)", value=192, step=12,
-                help="❓ Total operating time since commissioning. Relays older than 120 months enter the 'wear-out' phase of their lifecycle."
+                help="❓ Relays older than 120 months (10 Years) receive an automatic +5% risk penalty for every additional year."
             )
             alarms_count = st.number_input(
                 "Internal Alarms Count", value=0, step=1,
-                help="❓ The number of internal self-test failures, warning logs, or blocking signals recorded by the relay CPU."
+                help="❓ Internal self-test failures. Each alarm adds an automatic +1% risk penalty to the assessment."
             )
             
-            run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
+            run_btn = st.form_submit_button("🔍 Run Hybrid AI Analysis", use_container_width=True, type="primary")
 
     with col_dash:
         if run_btn:
             if not os.path.exists('Final_Relay_AI_Model.pkl'):
-                st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing from the directory.")
+                st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing.")
             else:
                 try:
                     model = joblib.load('Final_Relay_AI_Model.pkl')
@@ -189,13 +182,13 @@ with tab1:
                         columns=tuple(('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'))
                     )
                     
+                    # 1. AI Base Prediction
                     pred_raw = model.predict(features)
                     pred_list = np.ravel(pred_raw).tolist()
                     prediction_idx = int(pred_list.pop(0))
                     
                     probs_array = np.ravel(model.predict_proba(features))
                     probs_list = probs_array.tolist()
-                    
                     ai_confidence = float(max(probs_list)) * 100.0
                     
                     classes_dict = dict()
@@ -220,44 +213,64 @@ with tab1:
                         plot_colors.append(colors_dict.get(int(c), "#333333"))
                         
                     class_probs_map = dict(zip(actual_classes_list, probs_list))
-                    safe_prob_val = float(class_probs_map.get(0, 0.0))
-                        
-                    risk_score = float((1.0 - safe_prob_val) * 100.0)
+                    ai_safe_prob = float(class_probs_map.get(0, 0.0))
+                    ai_base_risk = float((1.0 - ai_safe_prob) * 100.0)
+                    
+                    # =========================================================
+                    # 2. PHYSICAL ENGINEERING BOUNDS (HEURISTICS)
+                    # =========================================================
+                    # Age: +5% risk for every year beyond 10 years (120 months)
+                    age_penalty = max(0.0, float(age_months) - 120.0) / 12.0 * 5.0
+                    
+                    # Alarms: +1% risk for every internal alarm
+                    alarm_penalty = float(alarms_count) * 1.0
+                    
+                    # Current: +2% risk for every 1000A above 5000A
+                    current_penalty = max(0.0, float(fault_current) - 5000.0) / 1000.0 * 2.0
+                    
+                    # Final Hybrid Risk Calculation
+                    final_risk = min(100.0, ai_base_risk + age_penalty + alarm_penalty + current_penalty)
+                    
+                    # Modify AI Mode if physical penalties dominate
                     mode = classes_dict.get(prediction_idx, "Unknown Error")
+                    if final_risk > (ai_base_risk + 20) and mode == 'Safe Condition':
+                        if age_penalty > current_penalty:
+                            mode = "Age Degradation (Heuristic)"
+                        else:
+                            mode = "High Stress Limits Exceeded"
+                    # =========================================================
                     
-                    # RPN Calculation
-                    rpn_score = int(risk_score * 10)
+                    # RPN & Status Logic
+                    rpn_score = int(final_risk * 10)
                     
-                    if risk_score < 30:
+                    if final_risk < 30:
                         status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
                         rpn_level = "Low"
-                    elif risk_score < 70:
+                    elif final_risk < 70:
                         status, color, action = "🟡 WARNING", "#f1c40f", f"Schedule CBM inspection focusing on {mode}."
                         rpn_level = "Medium"
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
                         rpn_level = "Critical"
 
+                    # UI Display
                     m1, m2, m3, m4 = st.columns(tuple((1, 1, 1, 1)))
                     m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
-                    m2.metric("⚠️ Failure Risk", f"{risk_score:.1f}%")
-                    
+                    m2.metric("⚠️ Hybrid Risk", f"{final_risk:.1f}%")
                     status_clean = status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
                     m3.metric("📈 Status", status_clean)
-                    
                     mode_words = mode.split()
-                    primary_issue_word = mode_words.pop(0)
-                    m4.metric("⚙️ Primary Issue", primary_issue_word)
+                    m4.metric("⚙️ Primary Issue", mode_words.pop(0) if mode_words else "Unknown")
 
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center; margin-top: 10px; margin-bottom: 10px;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    # Log History
+                    # Log
                     new_data = dict()
                     new_data.update({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
                     new_data.update({'Asset ID': asset_id})
                     new_data.update({'Noise Index': noise_index})
                     new_data.update({'Max Current (A)': fault_current})
-                    new_data.update({'Risk (%)': round(risk_score, 1)})
+                    new_data.update({'Risk (%)': round(final_risk, 1)})
                     new_data.update({'RPN': rpn_score})
                     new_data.update({'Status': status})
                     new_data.update({'Action': action})
@@ -265,51 +278,64 @@ with tab1:
                     new_log = pd.DataFrame(tuple((new_data,)))
                     st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
                     
+                    # Save for Report
+                    ai_reasons = f"The Hybrid Expert System combined AI analysis ({ai_base_risk:.1f}% base risk) with Physical Engineering limits. Age Penalty: +{age_penalty:.1f}%. Alarm Penalty: +{alarm_penalty:.1f}%. Current Stress: +{current_penalty:.1f}%."
+                    
                     eval_pack = dict()
                     eval_pack.update({'id': asset_id})
-                    eval_pack.update({'risk': risk_score})
+                    eval_pack.update({'risk': final_risk})
                     eval_pack.update({'status': status})
                     eval_pack.update({'color': color})
                     eval_pack.update({'mode': mode})
                     eval_pack.update({'action': action})
                     eval_pack.update({'probs': probs_list})
                     eval_pack.update({'classes': tuple(plot_classes)})
-                    eval_pack.update({'reasoning': ai_reasons.get(mode, "Analysis complete.")})
+                    eval_pack.update({'reasoning': ai_reasons})
                     eval_pack.update({'rpn_score': rpn_score})
                     eval_pack.update({'rpn_level': rpn_level})
                     
                     st.session_state.latest_eval = eval_pack
 
+                    # Top Charts
                     v1, v2 = st.columns(tuple((1, 1)))
                     with v1:
-                        st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
+                        st.plotly_chart(create_gauge(final_risk, "Hybrid Failure Risk", color), use_container_width=True)
                     with v2:
-                        st.markdown("#### 📊 Failure Mode Probabilities")
+                        st.markdown("#### 📊 AI Failure Probabilities")
                         fig_p = px.bar(x=probs_list, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
+                    # --- NEW: COMPONENT STRESS CHART (IMPACT-BASED) ---
                     st.markdown("---")
-                    st.markdown("#### 📉 Dynamic Input Variables Comparison")
-                    var_names_all = tuple(("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count"))
-                    var_vals_all = tuple((noise_index, fault_current, age_months, alarms_count))
-                    var_colors_tup = tuple(('#9b59b6', '#e74c3c', '#34495e', '#f39c12'))
+                    st.markdown("#### 📉 Component Stress Analysis (Relative Impact on Health)")
                     
-                    fig_vars = px.bar(
-                        x=var_vals_all, 
-                        y=var_names_all, 
+                    # Calculate Relative Stress (0 to 100+ %)
+                    noise_stress = min(150.0, (float(noise_index) / 1.5) * 100.0)
+                    curr_stress = min(150.0, (float(fault_current) / 8000.0) * 100.0)
+                    age_stress = min(150.0, (float(age_months) / 240.0) * 100.0) # 20 Years = 100% stress
+                    alarm_stress = min(150.0, (float(alarms_count) / 10.0) * 100.0) # 10 Alarms = 100% stress
+                    
+                    stress_names = tuple(("Noise Fluctuation", "Current Overload", "Age Wear", "Internal Alarms"))
+                    stress_vals = tuple((noise_stress, curr_stress, age_stress, alarm_stress))
+                    stress_colors = tuple(('#9b59b6', '#e74c3c', '#34495e', '#f39c12'))
+                    
+                    fig_stress = px.bar(
+                        x=stress_vals, 
+                        y=stress_names, 
                         orientation='h', 
-                        text=var_vals_all,
-                        color=var_names_all,
-                        color_discrete_sequence=var_colors_tup
+                        color=stress_names,
+                        color_discrete_sequence=stress_colors
                     )
-                    fig_vars.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_type="log", xaxis_title="Value (Log Scale)")
-                    st.plotly_chart(fig_vars, use_container_width=True)
+                    # Add a red dashed line at 100% threshold
+                    fig_stress.add_vline(x=100, line_dash="dash", line_color="red", annotation_text="Critical Limit")
+                    fig_stress.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Stress Factor (%)", yaxis_title="")
+                    st.plotly_chart(fig_stress, use_container_width=True)
 
                 except Exception as e:
                     st.error(f"Analysis failed: {str(e)}")
         else:
-            st.info("💡 Please input telemetry data and click 'Run AI Analysis' to start.")
+            st.info("💡 Please input telemetry data and click 'Run Hybrid AI Analysis' to start.")
 
 with tab2:
     st.markdown("### 📑 RPN & FMEA History Registry")
@@ -324,7 +350,7 @@ with tab3:
     if eval_data:
         rep_color = eval_data.get('color')
         
-        st.markdown(f"### 📄 Comprehensive AI Executive Report")
+        st.markdown(f"### 📄 Comprehensive Hybrid AI Executive Report")
         st.markdown(f"**Asset Designation:** `{eval_data.get('id')}` | **Assessment Time:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`")
         st.markdown("---")
         
@@ -350,15 +376,14 @@ with tab3:
             
             st.markdown(f"**FMEA RPN (Risk Priority Number):** `{eval_data.get('rpn_score')}/1000` ({eval_data.get('rpn_level')} Severity)")
             
-            st.markdown("#### 🧠 AI Diagnostic Reasoning")
+            st.markdown("#### 🧠 Expert System Reasoning")
             st.markdown(f"<div class='report-reasoning'>{eval_data.get('reasoning')}</div>", unsafe_allow_html=True)
 
         with rep_col2:
-            st.markdown("#### 📡 Multidimensional Risk Radar")
+            st.markdown("#### 📡 Multidimensional AI Radar")
             radar_fig = create_radar(eval_data.get('probs'), eval_data.get('classes'), rep_color)
             st.plotly_chart(radar_fig, use_container_width=True)
             
-            # --- THE NEW CHART: Predictive Trajectory ---
             st.markdown("#### 📈 Predictive Risk Trajectory (Simulated)")
             time_labels = tuple(('M-3', 'M-2', 'M-1', 'Current', 'M+1 (Proj)', 'M+2 (Proj)'))
             
@@ -384,12 +409,12 @@ with tab3:
                 height=250, 
                 margin=dict(l=0, r=0, t=30, b=0), 
                 yaxis_title="Risk (%)", 
-                xaxis_title="Timeline (Months)"
+                xaxis_title="Timeline"
             )
             st.plotly_chart(trend_fig, use_container_width=True)
             
         st.markdown("---")
-        report_txt = f"RELAYGUARD AI COMPREHENSIVE DIAGNOSTIC REPORT\n"
+        report_txt = f"RELAYGUARD HYBRID AI DIAGNOSTIC REPORT\n"
         report_txt += f"=============================================\n"
         report_txt += f"Asset: {eval_data.get('id')}\n"
         report_txt += f"Risk Score: {eval_data.get('risk'):.1f}%\n"
@@ -397,7 +422,7 @@ with tab3:
         report_txt += f"Status: {eval_data.get('status')}\n"
         report_txt += f"Primary Issue: {eval_data.get('mode')}\n"
         report_txt += f"---------------------------------------------\n"
-        report_txt += f"AI Reasoning: {eval_data.get('reasoning')}\n"
+        report_txt += f"System Reasoning: {eval_data.get('reasoning')}\n"
         report_txt += f"---------------------------------------------\n"
         report_txt += f"Mandatory Action: {eval_data.get('action')}\n"
         
