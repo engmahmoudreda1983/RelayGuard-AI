@@ -188,8 +188,7 @@ with tab1:
                     prediction_idx = int(pred_list.pop(0))
                     
                     probs_array = np.ravel(model.predict_proba(features))
-                    probs_list = probs_array.tolist()
-                    ai_confidence = float(max(probs_list)) * 100.0
+                    base_probs_list = probs_array.tolist()
                     
                     classes_dict = dict()
                     classes_dict.update({0: 'Safe Condition'})
@@ -197,48 +196,78 @@ with tab1:
                     classes_dict.update({2: 'Mechanical Wear'})
                     classes_dict.update({3: 'CPU/Power Error'})
                     
+                    actual_classes = getattr(model, 'classes_', tuple(range(len(base_probs_list))))
+                    actual_classes_list = list(actual_classes)
+                    class_probs_map = dict(zip(actual_classes_list, base_probs_list))
+                    
+                    ai_safe_prob = float(class_probs_map.get(0, 0.0))
+                    ai_base_risk = float((1.0 - ai_safe_prob) * 100.0)
+                    
+                    # 2. PHYSICAL ENGINEERING BOUNDS (HEURISTICS)
+                    age_penalty = max(0.0, float(age_months) - 120.0) / 12.0 * 5.0
+                    alarm_penalty = float(alarms_count) * 1.0
+                    current_penalty = max(0.0, float(fault_current) - 5000.0) / 1000.0 * 2.0
+                    
+                    total_penalty = age_penalty + alarm_penalty + current_penalty
+                    final_risk = min(100.0, ai_base_risk + total_penalty)
+                    
+                    # 3. RECALIBRATE PROBABILITIES FOR CONSISTENCY
+                    final_probs_list = list(base_probs_list) # Copy original
+                    if total_penalty > 0 and 0 in actual_classes_list:
+                        safe_idx = actual_classes_list.index(0)
+                        # Reduce safe probability based on the total penalty
+                        penalty_as_prob = total_penalty / 100.0
+                        new_safe_prob = max(0.0, base_probs_list[safe_idx] - penalty_as_prob)
+                        final_probs_list[safe_idx] = new_safe_prob
+                        
+                        # Distribute the extracted penalty to the highest predicted fault or a heuristic fault
+                        diff = base_probs_list[safe_idx] - new_safe_prob
+                        if diff > 0:
+                            # If age is the dominant penalty, assign the risk there (or mechanical wear)
+                            target_idx = 2 # Default to Mechanical Wear for physical stress
+                            if age_penalty > current_penalty and age_penalty > alarm_penalty:
+                                # We'll just push it to mechanical wear as a proxy for aging
+                                target_idx = actual_classes_list.index(2) if 2 in actual_classes_list else 1
+                            elif alarm_penalty > current_penalty:
+                                target_idx = actual_classes_list.index(3) if 3 in actual_classes_list else 1
+                            
+                            final_probs_list[target_idx] += diff
+                    
+                    # Normalize to ensure sum is 1.0 just in case
+                    prob_sum = sum(final_probs_list)
+                    if prob_sum > 0:
+                        final_probs_list = [p/prob_sum for p in final_probs_list]
+                        
+                    ai_confidence = float(max(final_probs_list)) * 100.0
+                    
+                    # Determine Mode based on the newly calibrated probabilities
+                    highest_prob_idx = final_probs_list.index(max(final_probs_list))
+                    best_class_val = actual_classes_list[highest_prob_idx]
+                    mode = classes_dict.get(best_class_val, "Unknown Error")
+                    
+                    # Fine-tune the text if penalties heavily overrode the AI
+                    if total_penalty > ai_base_risk and mode == 'Safe Condition' and final_risk >= 30:
+                        if age_penalty > current_penalty:
+                            mode = "Age Degradation (Heuristic)"
+                        else:
+                            mode = "High Stress Limits Exceeded"
+                    
                     colors_dict = dict()
                     colors_dict.update({0: '#2ecc71'})
                     colors_dict.update({1: '#f1c40f'})
                     colors_dict.update({2: '#e67e22'})
                     colors_dict.update({3: '#e74c3c'})
                     
-                    actual_classes = getattr(model, 'classes_', tuple(range(len(probs_list))))
-                    actual_classes_list = list(actual_classes)
-                    
                     plot_classes = list()
                     plot_colors = list()
                     for c in actual_classes_list:
-                        plot_classes.append(classes_dict.get(int(c), "Unknown Error"))
-                        plot_colors.append(colors_dict.get(int(c), "#333333"))
-                        
-                    class_probs_map = dict(zip(actual_classes_list, probs_list))
-                    ai_safe_prob = float(class_probs_map.get(0, 0.0))
-                    ai_base_risk = float((1.0 - ai_safe_prob) * 100.0)
-                    
-                    # =========================================================
-                    # 2. PHYSICAL ENGINEERING BOUNDS (HEURISTICS)
-                    # =========================================================
-                    # Age: +5% risk for every year beyond 10 years (120 months)
-                    age_penalty = max(0.0, float(age_months) - 120.0) / 12.0 * 5.0
-                    
-                    # Alarms: +1% risk for every internal alarm
-                    alarm_penalty = float(alarms_count) * 1.0
-                    
-                    # Current: +2% risk for every 1000A above 5000A
-                    current_penalty = max(0.0, float(fault_current) - 5000.0) / 1000.0 * 2.0
-                    
-                    # Final Hybrid Risk Calculation
-                    final_risk = min(100.0, ai_base_risk + age_penalty + alarm_penalty + current_penalty)
-                    
-                    # Modify AI Mode if physical penalties dominate
-                    mode = classes_dict.get(prediction_idx, "Unknown Error")
-                    if final_risk > (ai_base_risk + 20) and mode == 'Safe Condition':
-                        if age_penalty > current_penalty:
-                            mode = "Age Degradation (Heuristic)"
+                        class_name = classes_dict.get(int(c), "Unknown Error")
+                        # If we used the custom heuristic name, ensure it maps to the plot
+                        if class_name == 'Mechanical Wear' and 'Age' in mode:
+                            plot_classes.append("Age/Stress Degradation")
                         else:
-                            mode = "High Stress Limits Exceeded"
-                    # =========================================================
+                            plot_classes.append(class_name)
+                        plot_colors.append(colors_dict.get(int(c), "#333333"))
                     
                     # RPN & Status Logic
                     rpn_score = int(final_risk * 10)
@@ -255,8 +284,8 @@ with tab1:
 
                     # UI Display
                     m1, m2, m3, m4 = st.columns(tuple((1, 1, 1, 1)))
-                    m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
-                    m2.metric("⚠️ Hybrid Risk", f"{final_risk:.1f}%")
+                    m1.metric("🤖 Hybrid Confidence", f"{ai_confidence:.1f}%")
+                    m2.metric("⚠️ Failure Risk", f"{final_risk:.1f}%")
                     status_clean = status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
                     m3.metric("📈 Status", status_clean)
                     mode_words = mode.split()
@@ -278,8 +307,21 @@ with tab1:
                     new_log = pd.DataFrame(tuple((new_data,)))
                     st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
                     
-                    # Save for Report
-                    ai_reasons = f"The Hybrid Expert System combined AI analysis ({ai_base_risk:.1f}% base risk) with Physical Engineering limits. Age Penalty: +{age_penalty:.1f}%. Alarm Penalty: +{alarm_penalty:.1f}%. Current Stress: +{current_penalty:.1f}%."
+                    # CLEAN AI REASONING FOR REPORT
+                    ai_reasons_clean = ""
+                    if final_risk < 30:
+                        ai_reasons_clean = "Analysis indicates healthy telemetry. All parameters (Noise, Current, Age, Alarms) are within safe operational thresholds. No immediate action required."
+                    else:
+                        issues = list()
+                        if age_penalty > 0: issues.append(f"significant operating age ({age_months} months)")
+                        if alarm_penalty > 0: issues.append(f"internal hardware alarms ({alarms_count} events)")
+                        if current_penalty > 0: issues.append(f"high fault current exposure ({fault_current}A)")
+                        if ai_base_risk > 30 and noise_index > 1.0: issues.append(f"elevated signal noise ({noise_index})")
+                        
+                        if issues:
+                            ai_reasons_clean = f"The Hybrid Expert System detected an elevated failure risk ({final_risk:.1f}%) primarily driven by " + ", and ".join(issues) + ". This combination indicates a progressing degradation in the relay's reliability."
+                        else:
+                            ai_reasons_clean = f"The system detected an anomaly resulting in a {final_risk:.1f}% risk score, requiring scheduled maintenance."
                     
                     eval_pack = dict()
                     eval_pack.update({'id': asset_id})
@@ -288,9 +330,9 @@ with tab1:
                     eval_pack.update({'color': color})
                     eval_pack.update({'mode': mode})
                     eval_pack.update({'action': action})
-                    eval_pack.update({'probs': probs_list})
+                    eval_pack.update({'probs': final_probs_list})
                     eval_pack.update({'classes': tuple(plot_classes)})
-                    eval_pack.update({'reasoning': ai_reasons})
+                    eval_pack.update({'reasoning': ai_reasons_clean})
                     eval_pack.update({'rpn_score': rpn_score})
                     eval_pack.update({'rpn_level': rpn_level})
                     
@@ -301,20 +343,19 @@ with tab1:
                     with v1:
                         st.plotly_chart(create_gauge(final_risk, "Hybrid Failure Risk", color), use_container_width=True)
                     with v2:
-                        st.markdown("#### 📊 AI Failure Probabilities")
-                        fig_p = px.bar(x=probs_list, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
+                        st.markdown("#### 📊 Hybrid Failure Probabilities")
+                        fig_p = px.bar(x=final_probs_list, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
-                    # --- NEW: COMPONENT STRESS CHART (IMPACT-BASED) ---
+                    # --- COMPONENT STRESS CHART ---
                     st.markdown("---")
                     st.markdown("#### 📉 Component Stress Analysis (Relative Impact on Health)")
                     
-                    # Calculate Relative Stress (0 to 100+ %)
                     noise_stress = min(150.0, (float(noise_index) / 1.5) * 100.0)
                     curr_stress = min(150.0, (float(fault_current) / 8000.0) * 100.0)
-                    age_stress = min(150.0, (float(age_months) / 240.0) * 100.0) # 20 Years = 100% stress
-                    alarm_stress = min(150.0, (float(alarms_count) / 10.0) * 100.0) # 10 Alarms = 100% stress
+                    age_stress = min(150.0, (float(age_months) / 240.0) * 100.0)
+                    alarm_stress = min(150.0, (float(alarms_count) / 10.0) * 100.0)
                     
                     stress_names = tuple(("Noise Fluctuation", "Current Overload", "Age Wear", "Internal Alarms"))
                     stress_vals = tuple((noise_stress, curr_stress, age_stress, alarm_stress))
@@ -327,7 +368,6 @@ with tab1:
                         color=stress_names,
                         color_discrete_sequence=stress_colors
                     )
-                    # Add a red dashed line at 100% threshold
                     fig_stress.add_vline(x=100, line_dash="dash", line_color="red", annotation_text="Critical Limit")
                     fig_stress.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Stress Factor (%)", yaxis_title="")
                     st.plotly_chart(fig_stress, use_container_width=True)
@@ -376,11 +416,12 @@ with tab3:
             
             st.markdown(f"**FMEA RPN (Risk Priority Number):** `{eval_data.get('rpn_score')}/1000` ({eval_data.get('rpn_level')} Severity)")
             
+            # CLEAN REASONING TEXT
             st.markdown("#### 🧠 Expert System Reasoning")
             st.markdown(f"<div class='report-reasoning'>{eval_data.get('reasoning')}</div>", unsafe_allow_html=True)
 
         with rep_col2:
-            st.markdown("#### 📡 Multidimensional AI Radar")
+            st.markdown("#### 📡 Multidimensional Hybrid Radar")
             radar_fig = create_radar(eval_data.get('probs'), eval_data.get('classes'), rep_color)
             st.plotly_chart(radar_fig, use_container_width=True)
             
