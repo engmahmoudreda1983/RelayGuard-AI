@@ -43,7 +43,16 @@ if not hasattr(st.session_state, 'logged_in'):
     st.session_state.logged_in = False
 
 if not hasattr(st.session_state, 'fmea_log'):
-    st.session_state.fmea_log = pd.DataFrame(columns=('Timestamp', 'Asset ID', 'Noise Index', 'Max Current (A)', 'Risk (%)', 'Status', 'Action'))
+    cols_fmea = list()
+    cols_fmea.append('Timestamp')
+    cols_fmea.append('Asset ID')
+    cols_fmea.append('Noise Index')
+    cols_fmea.append('Max Current (A)')
+    cols_fmea.append('Risk (%)')
+    cols_fmea.append('RPN')
+    cols_fmea.append('Status')
+    cols_fmea.append('Action')
+    st.session_state.fmea_log = pd.DataFrame(columns=cols_fmea)
 
 if not hasattr(st.session_state, 'latest_eval'):
     st.session_state.latest_eval = None
@@ -58,7 +67,7 @@ except Exception:
 
 if not getattr(st.session_state, 'logged_in'):
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns((1, 1.5, 1))
+    col1, col2, col3 = st.columns(tuple((1, 1.5, 1)))
     with col2:
         st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -89,13 +98,13 @@ def create_gauge(value, title, color):
         number=dict(suffix="%", font=dict(size=30, color=color)),
         title=dict(text=title, font=dict(size=18, color='#333')),
         gauge=dict(
-            axis=dict(range=(0, 100), tickwidth=1),
+            axis=dict(range=tuple((0, 100)), tickwidth=1),
             bar=dict(color=color),
             bgcolor="white",
             steps=tuple((
-                dict(range=(0, 30), color='rgba(46, 204, 113, 0.2)'),
-                dict(range=(30, 70), color='rgba(241, 196, 15, 0.2)'),
-                dict(range=(70, 100), color='rgba(231, 76, 60, 0.2)')
+                dict(range=tuple((0, 30)), color='rgba(46, 204, 113, 0.2)'),
+                dict(range=tuple((30, 70)), color='rgba(241, 196, 15, 0.2)'),
+                dict(range=tuple((70, 100)), color='rgba(231, 76, 60, 0.2)')
             )),
             threshold=dict(line=dict(color="black", width=4), thickness=0.75, value=value)
         )
@@ -104,15 +113,16 @@ def create_gauge(value, title, color):
     return fig
 
 def create_radar(probs_list, classes_tup, color):
+    # FIXED: Used opacity=0.6 to prevent ValueError with Hex colors in Plotly
     fig = go.Figure(data=go.Scatterpolar(
         r=tuple((p * 100 for p in probs_list)),
         theta=classes_tup,
         fill='toself',
         line_color=color,
-        fillcolor=color.replace(')', ', 0.3)').replace('rgb', 'rgba') if 'rgb' in color else color + '40'
+        opacity=0.6
     ))
     fig.update_layout(
-        polar=dict(radialaxis=dict(visible=True, range=(0, 100))),
+        polar=dict(radialaxis=dict(visible=True, range=tuple((0, 100)))),
         showlegend=False,
         height=350,
         margin=dict(l=30, r=30, t=30, b=30)
@@ -129,7 +139,7 @@ ai_reasons.update({'CPU/Power Error': 'The presence of internal alarms strongly 
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
-col_title, col_logout = st.columns((10, 2))
+col_title, col_logout = st.columns(tuple((10, 2)))
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
@@ -138,17 +148,16 @@ with col_logout:
         st.session_state.logged_in = False
         st.rerun()
 
-tab1, tab2, tab3 = st.tabs(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"))
+tab1, tab2, tab3 = st.tabs(tuple(("🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report")))
 
 with tab1:
-    col_in, col_dash = st.columns((1, 2.5))
+    col_in, col_dash = st.columns(tuple((1, 2.5)))
     
     with col_in:
         with st.form("relay_input_form"):
             st.markdown("### 📥 Telemetry Data")
             asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-001")
             
-            # Tooltips are explicitly added here via 'help' parameter
             noise_index = st.number_input(
                 "Pre-Fault Noise Index (Signal Fluctuation)", value=0.05, step=0.01,
                 help="❓ Measures signal noise before a fault. Values > 1.5 strongly indicate hardware deterioration in the Analog Card."
@@ -178,7 +187,7 @@ with tab1:
                     
                     features = pd.DataFrame(
                         tuple((tuple((noise_index, fault_current, age_months, alarms_count)),)), 
-                        columns=('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')
+                        columns=tuple(('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'))
                     )
                     
                     pred_raw = model.predict(features)
@@ -217,14 +226,20 @@ with tab1:
                     risk_score = float((1.0 - safe_prob_val) * 100.0)
                     mode = classes_dict.get(prediction_idx, "Unknown Error")
                     
+                    # RPN Calculation Logic (0 to 1000 scale)
+                    rpn_score = int(risk_score * 10)
+                    
                     if risk_score < 30:
                         status, color, action = "🟢 SAFE", "#2ecc71", "Normal operation. Maintain TBM schedule."
+                        rpn_level = "Low"
                     elif risk_score < 70:
                         status, color, action = "🟡 WARNING", "#f1c40f", f"Schedule CBM inspection focusing on {mode}."
+                        rpn_level = "Medium"
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
+                        rpn_level = "Critical"
 
-                    m1, m2, m3, m4 = st.columns((1, 1, 1, 1))
+                    m1, m2, m3, m4 = st.columns(tuple((1, 1, 1, 1)))
                     m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
                     m2.metric("⚠️ Failure Risk", f"{risk_score:.1f}%")
                     
@@ -237,11 +252,20 @@ with tab1:
 
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center; margin-top: 10px; margin-bottom: 10px;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    new_data = {'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action}
+                    # Log History
+                    new_data = dict()
+                    new_data.update({'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")})
+                    new_data.update({'Asset ID': asset_id})
+                    new_data.update({'Noise Index': noise_index})
+                    new_data.update({'Max Current (A)': fault_current})
+                    new_data.update({'Risk (%)': round(risk_score, 1)})
+                    new_data.update({'RPN': rpn_score})
+                    new_data.update({'Status': status})
+                    new_data.update({'Action': action})
+                    
                     new_log = pd.DataFrame(tuple((new_data,)))
                     st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
                     
-                    # Saving comprehensive data for the Executive Report
                     eval_pack = dict()
                     eval_pack.update({'id': asset_id})
                     eval_pack.update({'risk': risk_score})
@@ -252,10 +276,12 @@ with tab1:
                     eval_pack.update({'probs': probs_list})
                     eval_pack.update({'classes': tuple(plot_classes)})
                     eval_pack.update({'reasoning': ai_reasons.get(mode, "Analysis complete.")})
+                    eval_pack.update({'rpn_score': rpn_score})
+                    eval_pack.update({'rpn_level': rpn_level})
                     
                     st.session_state.latest_eval = eval_pack
 
-                    v1, v2 = st.columns((1, 1))
+                    v1, v2 = st.columns(tuple((1, 1)))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
@@ -266,9 +292,9 @@ with tab1:
 
                     st.markdown("---")
                     st.markdown("#### 📉 Dynamic Input Variables Comparison")
-                    var_names_all = ("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count")
-                    var_vals_all = (noise_index, fault_current, age_months, alarms_count)
-                    var_colors_tup = ('#9b59b6', '#e74c3c', '#34495e', '#f39c12')
+                    var_names_all = tuple(("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count"))
+                    var_vals_all = tuple((noise_index, fault_current, age_months, alarms_count))
+                    var_colors_tup = tuple(('#9b59b6', '#e74c3c', '#34495e', '#f39c12'))
                     
                     fig_vars = px.bar(
                         x=var_vals_all, 
@@ -303,24 +329,32 @@ with tab3:
         st.markdown(f"**Asset Designation:** `{eval_data.get('id')}` | **Assessment Time:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`")
         st.markdown("---")
         
-        rep_col1, rep_col2 = st.columns((1, 1))
+        rep_col1, rep_col2 = st.columns(tuple((1, 1)))
         
         with rep_col1:
             st.markdown("#### 🎯 Diagnostic Summary")
             st.info(f"**Overall Health Index:** {100-eval_data.get('risk'):.1f}%")
-            st.error(f"**Predicted Failure Mode:** {eval_data.get('mode')}")
+            
+            # Dynamic Colors for Mode and Action!
+            mode_text = f"**Predicted Failure Mode:** {eval_data.get('mode')}"
+            action_text = f"**{eval_data.get('action')}**"
+            
+            risk_val = eval_data.get('risk')
+            if risk_val < 30:
+                st.success(mode_text)
+                st.success(f"✅ {action_text}")
+            elif risk_val < 70:
+                st.warning(mode_text)
+                st.warning(f"⚠️ {action_text}")
+            else:
+                st.error(mode_text)
+                st.error(f"🚨 {action_text}")
+            
+            # RPN Added here!
+            st.markdown(f"**FMEA RPN (Risk Priority Number):** `{eval_data.get('rpn_score')}/1000` ({eval_data.get('rpn_level')} Severity)")
             
             st.markdown("#### 🧠 AI Diagnostic Reasoning")
             st.markdown(f"<div class='report-reasoning'>{eval_data.get('reasoning')}</div>", unsafe_allow_html=True)
-            
-            st.markdown("#### 📋 Recommended Action Plan")
-            # Dynamic Colored Action Box
-            if eval_data.get('risk') < 30:
-                st.success(f"**{eval_data.get('action')}**")
-            elif eval_data.get('risk') < 70:
-                st.warning(f"**{eval_data.get('action')}**")
-            else:
-                st.error(f"**{eval_data.get('action')}**")
 
         with rep_col2:
             st.markdown("#### 📡 Multidimensional Risk Radar")
@@ -328,16 +362,17 @@ with tab3:
             st.plotly_chart(radar_fig, use_container_width=True)
             
         st.markdown("---")
-        report_txt = f"RELAYGUARD AI COMPREHENSIVE DIAGNOSTIC REPORT\\n"
-        report_txt += f"=============================================\\n"
-        report_txt += f"Asset: {eval_data.get('id')}\\n"
-        report_txt += f"Risk Score: {eval_data.get('risk'):.1f}%\\n"
-        report_txt += f"Status: {eval_data.get('status')}\\n"
-        report_txt += f"Primary Issue: {eval_data.get('mode')}\\n"
-        report_txt += f"---------------------------------------------\\n"
-        report_txt += f"AI Reasoning: {eval_data.get('reasoning')}\\n"
-        report_txt += f"---------------------------------------------\\n"
-        report_txt += f"Mandatory Action: {eval_data.get('action')}\\n"
+        report_txt = f"RELAYGUARD AI COMPREHENSIVE DIAGNOSTIC REPORT\n"
+        report_txt += f"=============================================\n"
+        report_txt += f"Asset: {eval_data.get('id')}\n"
+        report_txt += f"Risk Score: {eval_data.get('risk'):.1f}%\n"
+        report_txt += f"RPN Level: {eval_data.get('rpn_score')} ({eval_data.get('rpn_level')})\n"
+        report_txt += f"Status: {eval_data.get('status')}\n"
+        report_txt += f"Primary Issue: {eval_data.get('mode')}\n"
+        report_txt += f"---------------------------------------------\n"
+        report_txt += f"AI Reasoning: {eval_data.get('reasoning')}\n"
+        report_txt += f"---------------------------------------------\n"
+        report_txt += f"Mandatory Action: {eval_data.get('action')}\n"
         
         st.download_button("📥 Download Official Report (TXT)", data=report_txt, file_name=f"RelayGuard_{eval_data.get('id')}.txt", use_container_width=True)
     else:
