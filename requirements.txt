@@ -1,21 +1,6 @@
-# Core Framework
 streamlit
-
-# Data Processing & Math
-# Fixed version to match your trained model environment
 pandas
 numpy
-
-# Visualization
 plotly
-
-# Machine Learning & Model Persistence
-# Critical: Use this version to match the model trained in Colab
 scikit-learn==1.6.1
 joblib
-
-# File Handling for Excel/CSV
-openpyxl
-
-# Optional: For any image processing in the dashboard
-Pillow
