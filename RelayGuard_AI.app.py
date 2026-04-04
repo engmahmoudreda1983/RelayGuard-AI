@@ -55,7 +55,7 @@ except KeyError:
 
 if not st.session_state['logged_in']:
     st.markdown("<br><br><br>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 1.5, 1])
+    col1, col2, col3 = st.columns((1, 1.5, 1))
     with col2:
         st.markdown("<div class='main-header'><h2 style='text-align: center; margin:0;'>🛡️ RelayGuard AI Login</h2><p style='text-align: center; margin:0; color:#aaa;'>Enterprise Protection Analytics Portal</p></div>", unsafe_allow_html=True)
         with st.form("login_form"):
@@ -75,25 +75,25 @@ if not st.session_state['logged_in']:
 # ==========================================
 def highlight_fmea(row):
     status = row.get('Status', '')
-    if 'SAFE' in status: return ['background-color: #E8F5E9; color: #00A65A; font-weight: bold'] * len(row)
-    if 'WARNING' in status: return ['background-color: #FEF9E7; color: #D35400; font-weight: bold'] * len(row)
-    if 'DANGER' in status: return ['background-color: #FDEDEC; color: #C0392B; font-weight: bold'] * len(row)
-    return [''] * len(row)
+    if 'SAFE' in status: return list(('background-color: #E8F5E9; color: #00A65A; font-weight: bold',)) * len(row)
+    if 'WARNING' in status: return list(('background-color: #FEF9E7; color: #D35400; font-weight: bold',)) * len(row)
+    if 'DANGER' in status: return list(('background-color: #FDEDEC; color: #C0392B; font-weight: bold',)) * len(row)
+    return list(('',)) * len(row)
 
 def create_gauge(value, title, color):
-    # FIXED: Arrays explicitly defined for range
+    # FIXED: Used tuples () instead of square brackets to prevent parsing deletion
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
         title={'text': title, 'font': {'size': 18, 'color': '#333'}},
         gauge={
-            'axis': {'range':, 'tickwidth': 1},
+            'axis': {'range': (0, 100), 'tickwidth': 1},
             'bar': {'color': color},
             'bgcolor': "white",
             'steps': [
-                {'range':, 'color': 'rgba(46, 204, 113, 0.2)'}, 
-                {'range':, 'color': 'rgba(241, 196, 15, 0.2)'}, 
-                {'range':, 'color': 'rgba(231, 76, 60, 0.2)'}
+                {'range': (0, 30), 'color': 'rgba(46, 204, 113, 0.2)'}, 
+                {'range': (30, 70), 'color': 'rgba(241, 196, 15, 0.2)'}, 
+                {'range': (70, 100), 'color': 'rgba(231, 76, 60, 0.2)'}
             ],
             'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': value}
         }))
@@ -103,8 +103,8 @@ def create_gauge(value, title, color):
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
-# FIXED: Added sizing array to st.columns
-col_title, col_logout = st.columns()
+# FIXED: Used tuple for sizing
+col_title, col_logout = st.columns((10, 2))
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
 with col_logout:
@@ -116,7 +116,7 @@ with col_logout:
 tab1, tab2, tab3 = st.tabs(["🛡️ Diagnostic Dashboard", "📑 FMEA & Risk Logs", "📄 Executive Report"])
 
 with tab1:
-    col_in, col_dash = st.columns([1, 2.5])
+    col_in, col_dash = st.columns((1, 2.5))
     
     with col_in:
         with st.form("relay_input_form"):
@@ -155,11 +155,11 @@ with tab1:
                     features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
                                             columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
                     
-                    # FIXED: Extract scalar from prediction array safely
+                    # Extract scalar from prediction array safely
                     prediction_raw = model.predict(features)
                     prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
-                    # FIXED: Probability & Risk Calculation using index
+                    # Probability & Risk Calculation
                     probs_array = model.predict_proba(features)
                     probs = np.asarray(probs_array).ravel()
                     risk_score = float((1 - probs) * 100)
@@ -192,7 +192,7 @@ with tab1:
                     st.session_state['latest_eval'] = {'id': asset_id, 'risk': risk_score, 'status': status, 'color': color, 'mode': mode, 'action': action, 'probs': probs, 'classes': classes}
 
                     # Charts
-                    v1, v2 = st.columns(2)
+                    v1, v2 = st.columns((1, 1))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
