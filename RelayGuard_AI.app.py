@@ -144,14 +144,16 @@ with tab1:
                         columns=('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')
                     )
                     
-                    # 3. Model Prediction (Safe 0-dimensional fix)
+                    # 3. ANTI-DELETION BUG FIX (Extracting numbers using pop to avoid brackets)
                     pred_raw = model.predict(features)
-                    prediction_idx = int(np.ravel(pred_raw))
+                    pred_list = np.ravel(pred_raw).tolist()
+                    prediction_idx = int(pred_list.pop(0))
                     
                     probs_array = np.ravel(model.predict_proba(features))
+                    probs_list = probs_array.tolist()
                     
-                    # NEW: AI Confidence
-                    ai_confidence = float(np.max(probs_array)) * 100.0
+                    # AI Confidence
+                    ai_confidence = float(max(probs_list)) * 100.0
                     
                     classes_dict = dict()
                     classes_dict.update({0: 'Safe Condition'})
@@ -165,22 +167,21 @@ with tab1:
                     colors_dict.update({2: '#e67e22'})
                     colors_dict.update({3: '#e74c3c'})
                     
-                    # 4. FIX: Dynamic classes mapping matching Model output length
-                    actual_classes = getattr(model, 'classes_', tuple(range(len(probs_array))))
+                    # 4. Dynamic classes mapping matching Model output length
+                    actual_classes = getattr(model, 'classes_', tuple(range(len(probs_list))))
+                    actual_classes_list = list(actual_classes)
+                    
                     plot_classes = list()
                     plot_colors = list()
-                    for c in actual_classes:
-                        plot_classes.append(classes_dict.get(int(c), f"Class {c}"))
+                    for c in actual_classes_list:
+                        plot_classes.append(classes_dict.get(int(c), "Unknown Error"))
                         plot_colors.append(colors_dict.get(int(c), "#333333"))
                         
-                    # Calculate Risk safely
-                    if 0 in actual_classes:
-                        safe_idx_in_array = list(actual_classes).index(0)
-                        safe_prob = float(probs_array[safe_idx_in_array])
-                    else:
-                        safe_prob = float(probs_array)
+                    # Calculate Risk safely using Dictionary Zip (NO BRACKETS)
+                    class_probs_map = dict(zip(actual_classes_list, probs_list))
+                    safe_prob_val = float(class_probs_map.get(0, 0.0))
                         
-                    risk_score = float((1.0 - safe_prob) * 100.0)
+                    risk_score = float((1.0 - safe_prob_val) * 100.0)
                     mode = classes_dict.get(prediction_idx, "Unknown Error")
                     
                     if risk_score < 30:
@@ -190,12 +191,18 @@ with tab1:
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
 
-                    # --- NEW: KEY NUMBERS METRICS ---
+                    # --- KEY NUMBERS METRICS ---
                     m1, m2, m3, m4 = st.columns((1, 1, 1, 1))
                     m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
                     m2.metric("⚠️ Failure Risk", f"{risk_score:.1f}%")
-                    m3.metric("📈 Status", status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip())
-                    m4.metric("⚙️ Primary Issue", mode.split())
+                    
+                    status_clean = status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
+                    m3.metric("📈 Status", status_clean)
+                    
+                    # Extract first word safely
+                    mode_words = mode.split()
+                    primary_issue_word = mode_words.pop(0)
+                    m4.metric("⚙️ Primary Issue", primary_issue_word)
 
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center; margin-top: 10px; margin-bottom: 10px;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
@@ -211,16 +218,16 @@ with tab1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
                     with v2:
                         st.markdown("#### 📊 Failure Mode Probabilities")
-                        fig_p = px.bar(x=probs_array*100, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
-                        fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability (%)", yaxis_title="")
+                        fig_p = px.bar(x=probs_list, y=plot_classes, orientation='h', color=plot_classes, color_discrete_sequence=plot_colors)
+                        fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
-                    # --- NEW: DYNAMIC VARIABLES BAR CHART ---
+                    # --- DYNAMIC VARIABLES BAR CHART ---
                     st.markdown("---")
                     st.markdown("#### 📉 Dynamic Input Variables Comparison")
                     var_names_all = ("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count")
                     var_vals_all = (noise_index, fault_current, age_months, alarms_count)
-                    var_colors = ('#9b59b6', '#e74c3c', '#34495e', '#f39c12')
+                    var_colors_tup = ('#9b59b6', '#e74c3c', '#34495e', '#f39c12')
                     
                     fig_vars = px.bar(
                         x=var_vals_all, 
@@ -228,7 +235,7 @@ with tab1:
                         orientation='h', 
                         text=var_vals_all,
                         color=var_names_all,
-                        color_discrete_sequence=var_colors
+                        color_discrete_sequence=var_colors_tup
                     )
                     # Log scale applied to X-axis because of large difference between Current (1500) and Noise (0.05)
                     fig_vars.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_type="log", xaxis_title="Value (Log Scale)")
