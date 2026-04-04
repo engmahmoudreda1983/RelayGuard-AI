@@ -1,0 +1,20 @@
+# Core Streamlit library
+streamlit
+
+# Data manipulation and math
+pandas
+numpy
+
+# Visualization
+plotly
+
+# Machine Learning & Model Loading
+# We fix the version to 1.6.1 to match your trained model and avoid TypeErrors
+scikit-learn==1.6.1
+joblib
+
+# Image handling (if needed for logos)
+Pillow
+
+# For handling Excel files
+openpyxl
