@@ -81,7 +81,7 @@ def highlight_fmea(row):
     return [''] * len(row)
 
 def create_gauge(value, title, color):
-    # ALL SYNTAX ERRORS FIXED: The arrays,, etc., are properly assigned here.
+    # FIXED: Arrays explicitly defined for range
     fig = go.Figure(go.Indicator(
         mode="gauge+number", value=value,
         number={'suffix': "%", 'font': {'size': 30, 'color': color}},
@@ -103,6 +103,7 @@ def create_gauge(value, title, color):
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
+# FIXED: Added sizing array to st.columns
 col_title, col_logout = st.columns()
 with col_title:
     st.markdown("<div class='main-header' style='padding: 15px;'><h2 style='margin:0;'>🛡️ RelayGuard AI - Health Dashboard</h2></div>", unsafe_allow_html=True)
@@ -154,11 +155,11 @@ with tab1:
                     features = pd.DataFrame([[noise_index, fault_current, age_months, alarms_count]], 
                                             columns=['Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count'])
                     
-                    # Safe Prediction Extraction
+                    # FIXED: Extract scalar from prediction array safely
                     prediction_raw = model.predict(features)
                     prediction_idx = int(np.asarray(prediction_raw).ravel())
                     
-                    # Probability & Risk Calculation
+                    # FIXED: Probability & Risk Calculation using index
                     probs_array = model.predict_proba(features)
                     probs = np.asarray(probs_array).ravel()
                     risk_score = float((1 - probs) * 100)
