@@ -30,6 +30,9 @@ st.markdown("""
         background: linear-gradient(90deg, #1E1E1E 0%, #2D2D2D 100%);
         padding: 20px; border-radius: 10px; border-left: 8px solid #9B59B6; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 20px;
     }
+    .report-reasoning {
+        background-color: #F4F6F7; padding: 20px; border-radius: 10px; border-left: 5px solid #2980B9; font-size: 16px; margin-bottom: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -100,6 +103,29 @@ def create_gauge(value, title, color):
     fig.update_layout(height=280, margin=dict(l=20, r=20, t=50, b=20), paper_bgcolor="rgba(0,0,0,0)")
     return fig
 
+def create_radar(probs_list, classes_tup, color):
+    fig = go.Figure(data=go.Scatterpolar(
+        r=tuple((p * 100 for p in probs_list)),
+        theta=classes_tup,
+        fill='toself',
+        line_color=color,
+        fillcolor=color.replace(')', ', 0.3)').replace('rgb', 'rgba') if 'rgb' in color else color + '40'
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=(0, 100))),
+        showlegend=False,
+        height=350,
+        margin=dict(l=30, r=30, t=30, b=30)
+    )
+    return fig
+
+# AI Reasoning Dictionary
+ai_reasons = dict()
+ai_reasons.update({'Safe Condition': 'All telemetry parameters (Noise, Current, Age, Alarms) are within normal operational thresholds. The asset is operating as expected with no significant degradation detected.'})
+ai_reasons.update({'Analog Card Issue': 'An elevated Pre-Fault Noise Index is the primary indicator. This suggests potential degradation in the analog-to-digital conversion circuits or filtering components of the relay.'})
+ai_reasons.update({'Mechanical Wear': 'The combination of operating age and exposure to high fault currents indicates severe mechanical stress and degradation on the relay internal contacts and moving parts.'})
+ai_reasons.update({'CPU/Power Error': 'The presence of internal alarms strongly suggests a logic board malfunction, memory failure, or power supply instability within the unit.'})
+
 # ==========================================
 # 4. Main Interface Logic
 # ==========================================
@@ -122,10 +148,23 @@ with tab1:
             st.markdown("### 📥 Telemetry Data")
             asset_id = st.text_input("Asset ID / Station Name", value="SUB-RELAY-001")
             
-            noise_index = st.number_input("Pre-Fault Noise Index", value=0.05, step=0.01)
-            fault_current = st.number_input("Max Fault Current (A)", value=1500, step=100)
-            age_months = st.number_input("Relay Age (Months)", value=192, step=12)
-            alarms_count = st.number_input("Internal Alarms Count", value=0, step=1)
+            # Tooltips are explicitly added here via 'help' parameter
+            noise_index = st.number_input(
+                "Pre-Fault Noise Index (Signal Fluctuation)", value=0.05, step=0.01,
+                help="❓ Measures signal noise before a fault. Values > 1.5 strongly indicate hardware deterioration in the Analog Card."
+            )
+            fault_current = st.number_input(
+                "Max Fault Current (A)", value=1500, step=100,
+                help="❓ The peak current recorded during a fault event. Very high currents cause extreme mechanical stress on the relay."
+            )
+            age_months = st.number_input(
+                "Relay Age (Months)", value=192, step=12,
+                help="❓ Total operating time since commissioning. Relays older than 120 months enter the 'wear-out' phase of their lifecycle."
+            )
+            alarms_count = st.number_input(
+                "Internal Alarms Count", value=0, step=1,
+                help="❓ The number of internal self-test failures, warning logs, or blocking signals recorded by the relay CPU."
+            )
             
             run_btn = st.form_submit_button("🔍 Run AI Analysis", use_container_width=True, type="primary")
 
@@ -135,16 +174,13 @@ with tab1:
                 st.error("🚨 CRITICAL: Model file 'Final_Relay_AI_Model.pkl' is missing from the directory.")
             else:
                 try:
-                    # 1. Load Model
                     model = joblib.load('Final_Relay_AI_Model.pkl')
                     
-                    # 2. Extract Data Safely
                     features = pd.DataFrame(
                         tuple((tuple((noise_index, fault_current, age_months, alarms_count)),)), 
                         columns=('Pre_Fault_Noise_Index', 'Max_Fault_Current_A', 'Relay_Age_Months', 'Internal_Alarms_Count')
                     )
                     
-                    # 3. ANTI-DELETION BUG FIX (Extracting numbers using pop to avoid brackets)
                     pred_raw = model.predict(features)
                     pred_list = np.ravel(pred_raw).tolist()
                     prediction_idx = int(pred_list.pop(0))
@@ -152,7 +188,6 @@ with tab1:
                     probs_array = np.ravel(model.predict_proba(features))
                     probs_list = probs_array.tolist()
                     
-                    # AI Confidence
                     ai_confidence = float(max(probs_list)) * 100.0
                     
                     classes_dict = dict()
@@ -167,7 +202,6 @@ with tab1:
                     colors_dict.update({2: '#e67e22'})
                     colors_dict.update({3: '#e74c3c'})
                     
-                    # 4. Dynamic classes mapping matching Model output length
                     actual_classes = getattr(model, 'classes_', tuple(range(len(probs_list))))
                     actual_classes_list = list(actual_classes)
                     
@@ -177,7 +211,6 @@ with tab1:
                         plot_classes.append(classes_dict.get(int(c), "Unknown Error"))
                         plot_colors.append(colors_dict.get(int(c), "#333333"))
                         
-                    # Calculate Risk safely using Dictionary Zip (NO BRACKETS)
                     class_probs_map = dict(zip(actual_classes_list, probs_list))
                     safe_prob_val = float(class_probs_map.get(0, 0.0))
                         
@@ -191,7 +224,6 @@ with tab1:
                     else:
                         status, color, action = "🔴 DANGER", "#e74c3c", f"Urgent replacement required due to {mode}."
 
-                    # --- KEY NUMBERS METRICS ---
                     m1, m2, m3, m4 = st.columns((1, 1, 1, 1))
                     m1.metric("🤖 AI Confidence", f"{ai_confidence:.1f}%")
                     m2.metric("⚠️ Failure Risk", f"{risk_score:.1f}%")
@@ -199,20 +231,30 @@ with tab1:
                     status_clean = status.replace("🟢", "").replace("🟡", "").replace("🔴", "").strip()
                     m3.metric("📈 Status", status_clean)
                     
-                    # Extract first word safely
                     mode_words = mode.split()
                     primary_issue_word = mode_words.pop(0)
                     m4.metric("⚙️ Primary Issue", primary_issue_word)
 
                     st.markdown(f"<div style='border-radius:10px; background:{color}20; border:2px solid {color}; padding:15px; text-align:center; margin-top: 10px; margin-bottom: 10px;'><h2 style='color:{color}; margin:0;'>{status}: {mode}</h2></div>", unsafe_allow_html=True)
                     
-                    # Log History
                     new_data = {'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 'Asset ID': asset_id, 'Noise Index': noise_index, 'Max Current (A)': fault_current, 'Risk (%)': round(risk_score, 1), 'Status': status, 'Action': action}
                     new_log = pd.DataFrame(tuple((new_data,)))
                     st.session_state.fmea_log = pd.concat((new_log, st.session_state.fmea_log), ignore_index=True).head(100)
-                    st.session_state.latest_eval = dict(id=asset_id, risk=risk_score, status=status, color=color, mode=mode, action=action)
+                    
+                    # Saving comprehensive data for the Executive Report
+                    eval_pack = dict()
+                    eval_pack.update({'id': asset_id})
+                    eval_pack.update({'risk': risk_score})
+                    eval_pack.update({'status': status})
+                    eval_pack.update({'color': color})
+                    eval_pack.update({'mode': mode})
+                    eval_pack.update({'action': action})
+                    eval_pack.update({'probs': probs_list})
+                    eval_pack.update({'classes': tuple(plot_classes)})
+                    eval_pack.update({'reasoning': ai_reasons.get(mode, "Analysis complete.")})
+                    
+                    st.session_state.latest_eval = eval_pack
 
-                    # Charts
                     v1, v2 = st.columns((1, 1))
                     with v1:
                         st.plotly_chart(create_gauge(risk_score, "Failure Risk Score", color), use_container_width=True)
@@ -222,7 +264,6 @@ with tab1:
                         fig_p.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_title="Probability", yaxis_title="")
                         st.plotly_chart(fig_p, use_container_width=True)
 
-                    # --- DYNAMIC VARIABLES BAR CHART ---
                     st.markdown("---")
                     st.markdown("#### 📉 Dynamic Input Variables Comparison")
                     var_names_all = ("Noise Index", "Max Current (A)", "Age (Months)", "Alarms Count")
@@ -237,7 +278,6 @@ with tab1:
                         color=var_names_all,
                         color_discrete_sequence=var_colors_tup
                     )
-                    # Log scale applied to X-axis because of large difference between Current (1500) and Noise (0.05)
                     fig_vars.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=30, b=0), xaxis_type="log", xaxis_title="Value (Log Scale)")
                     st.plotly_chart(fig_vars, use_container_width=True)
 
@@ -257,10 +297,48 @@ with tab2:
 with tab3:
     eval_data = getattr(st.session_state, 'latest_eval')
     if eval_data:
-        st.markdown(f"### 📄 AI Executive Report - {eval_data.get('id')}")
-        st.info(f"**Health Index:** {100-eval_data.get('risk'):.1f}% | **Failure Mode:** {eval_data.get('mode')}")
-        st.success(f"**Corrective Action:** {eval_data.get('action')}")
-        report = f"RELAYGUARD AI DIAGNOSTIC REPORT\nAsset: {eval_data.get('id')}\nRisk Score: {eval_data.get('risk'):.1f}%\nStatus: {eval_data.get('status')}\nPrimary Issue: {eval_data.get('mode')}\nRecommendation: {eval_data.get('action')}"
-        st.download_button("📥 Download Full Report (TXT)", data=report, file_name=f"RelayGuard_{eval_data.get('id')}.txt", use_container_width=True)
+        rep_color = eval_data.get('color')
+        
+        st.markdown(f"### 📄 Comprehensive AI Executive Report")
+        st.markdown(f"**Asset Designation:** `{eval_data.get('id')}` | **Assessment Time:** `{datetime.now().strftime('%Y-%m-%d %H:%M')}`")
+        st.markdown("---")
+        
+        rep_col1, rep_col2 = st.columns((1, 1))
+        
+        with rep_col1:
+            st.markdown("#### 🎯 Diagnostic Summary")
+            st.info(f"**Overall Health Index:** {100-eval_data.get('risk'):.1f}%")
+            st.error(f"**Predicted Failure Mode:** {eval_data.get('mode')}")
+            
+            st.markdown("#### 🧠 AI Diagnostic Reasoning")
+            st.markdown(f"<div class='report-reasoning'>{eval_data.get('reasoning')}</div>", unsafe_allow_html=True)
+            
+            st.markdown("#### 📋 Recommended Action Plan")
+            # Dynamic Colored Action Box
+            if eval_data.get('risk') < 30:
+                st.success(f"**{eval_data.get('action')}**")
+            elif eval_data.get('risk') < 70:
+                st.warning(f"**{eval_data.get('action')}**")
+            else:
+                st.error(f"**{eval_data.get('action')}**")
+
+        with rep_col2:
+            st.markdown("#### 📡 Multidimensional Risk Radar")
+            radar_fig = create_radar(eval_data.get('probs'), eval_data.get('classes'), rep_color)
+            st.plotly_chart(radar_fig, use_container_width=True)
+            
+        st.markdown("---")
+        report_txt = f"RELAYGUARD AI COMPREHENSIVE DIAGNOSTIC REPORT\\n"
+        report_txt += f"=============================================\\n"
+        report_txt += f"Asset: {eval_data.get('id')}\\n"
+        report_txt += f"Risk Score: {eval_data.get('risk'):.1f}%\\n"
+        report_txt += f"Status: {eval_data.get('status')}\\n"
+        report_txt += f"Primary Issue: {eval_data.get('mode')}\\n"
+        report_txt += f"---------------------------------------------\\n"
+        report_txt += f"AI Reasoning: {eval_data.get('reasoning')}\\n"
+        report_txt += f"---------------------------------------------\\n"
+        report_txt += f"Mandatory Action: {eval_data.get('action')}\\n"
+        
+        st.download_button("📥 Download Official Report (TXT)", data=report_txt, file_name=f"RelayGuard_{eval_data.get('id')}.txt", use_container_width=True)
     else:
-        st.info("💡 Run an evaluation to generate a report.")
+        st.info("💡 Run an evaluation in the Diagnostic Dashboard to generate the Executive Report.")
