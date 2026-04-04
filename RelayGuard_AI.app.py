@@ -113,7 +113,6 @@ def create_gauge(value, title, color):
     return fig
 
 def create_radar(probs_list, classes_tup, color):
-    # FIXED: Used opacity=0.6 to prevent ValueError with Hex colors in Plotly
     fig = go.Figure(data=go.Scatterpolar(
         r=tuple((p * 100 for p in probs_list)),
         theta=classes_tup,
@@ -132,7 +131,7 @@ def create_radar(probs_list, classes_tup, color):
 # AI Reasoning Dictionary
 ai_reasons = dict()
 ai_reasons.update({'Safe Condition': 'All telemetry parameters (Noise, Current, Age, Alarms) are within normal operational thresholds. The asset is operating as expected with no significant degradation detected.'})
-ai_reasons.update({'Analog Card Issue': 'An elevated Pre-Fault Noise Index is the primary indicator. This suggests potential degradation in the analog-to-digital conversion circuits or filtering components of the relay.'})
+ai_reasons.update({'Analog Card Issue': 'An elevated Pre-Fault Noise Index is the primary indicator. The Random Forest model heavily weights this feature as it historically correlates with degradation in the analog-to-digital conversion circuits.'})
 ai_reasons.update({'Mechanical Wear': 'The combination of operating age and exposure to high fault currents indicates severe mechanical stress and degradation on the relay internal contacts and moving parts.'})
 ai_reasons.update({'CPU/Power Error': 'The presence of internal alarms strongly suggests a logic board malfunction, memory failure, or power supply instability within the unit.'})
 
@@ -226,7 +225,7 @@ with tab1:
                     risk_score = float((1.0 - safe_prob_val) * 100.0)
                     mode = classes_dict.get(prediction_idx, "Unknown Error")
                     
-                    # RPN Calculation Logic (0 to 1000 scale)
+                    # RPN Calculation
                     rpn_score = int(risk_score * 10)
                     
                     if risk_score < 30:
@@ -335,7 +334,6 @@ with tab3:
             st.markdown("#### 🎯 Diagnostic Summary")
             st.info(f"**Overall Health Index:** {100-eval_data.get('risk'):.1f}%")
             
-            # Dynamic Colors for Mode and Action!
             mode_text = f"**Predicted Failure Mode:** {eval_data.get('mode')}"
             action_text = f"**{eval_data.get('action')}**"
             
@@ -350,7 +348,6 @@ with tab3:
                 st.error(mode_text)
                 st.error(f"🚨 {action_text}")
             
-            # RPN Added here!
             st.markdown(f"**FMEA RPN (Risk Priority Number):** `{eval_data.get('rpn_score')}/1000` ({eval_data.get('rpn_level')} Severity)")
             
             st.markdown("#### 🧠 AI Diagnostic Reasoning")
@@ -360,6 +357,36 @@ with tab3:
             st.markdown("#### 📡 Multidimensional Risk Radar")
             radar_fig = create_radar(eval_data.get('probs'), eval_data.get('classes'), rep_color)
             st.plotly_chart(radar_fig, use_container_width=True)
+            
+            # --- THE NEW CHART: Predictive Trajectory ---
+            st.markdown("#### 📈 Predictive Risk Trajectory (Simulated)")
+            time_labels = tuple(('M-3', 'M-2', 'M-1', 'Current', 'M+1 (Proj)', 'M+2 (Proj)'))
+            
+            v1 = max(0.0, risk_val - 12.0)
+            v2 = max(0.0, risk_val - 5.0)
+            v3 = max(0.0, risk_val - 1.5)
+            v4 = risk_val
+            v5 = min(100.0, risk_val + 8.0)
+            v6 = min(100.0, risk_val + 20.0)
+            
+            trend_vals = tuple((v1, v2, v3, v4, v5, v6))
+            
+            trend_fig = go.Figure()
+            trend_scatter = go.Scatter(
+                x=time_labels, 
+                y=trend_vals, 
+                mode='lines+markers',
+                line=dict(color=rep_color, width=4),
+                marker=dict(size=10)
+            )
+            trend_fig.add_trace(trend_scatter)
+            trend_fig.update_layout(
+                height=250, 
+                margin=dict(l=0, r=0, t=30, b=0), 
+                yaxis_title="Risk (%)", 
+                xaxis_title="Timeline (Months)"
+            )
+            st.plotly_chart(trend_fig, use_container_width=True)
             
         st.markdown("---")
         report_txt = f"RELAYGUARD AI COMPREHENSIVE DIAGNOSTIC REPORT\n"
