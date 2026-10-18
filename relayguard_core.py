@@ -35,6 +35,7 @@ MODES = {
     'Communication': {'S': 6, 'text': 'Protection signalling, station bus or time synchronisation problems'},
     'Age and obsolescence': {'S': 5, 'text': 'Relay near the end of its life, old firmware, no self-supervision'},
     'Test overdue': {'S': 4, 'text': 'Periodic secondary injection test overdue'},
+    'Record anomaly (AI)': {'S': 7, 'text': 'Disturbance records unlike the normal fleet behaviour learned by the AI model (analog input noise, measurement chain)'},
 }
 MODE_ORDER = list(MODES)
 ACTIONS = {
@@ -45,7 +46,37 @@ ACTIONS = {
     'Communication': 'Check the protection signalling channel (fibre, multiplexer), the station bus and the time server.',
     'Age and obsolescence': 'Plan relay replacement in the capital programme; update firmware where the vendor recommends.',
     'Test overdue': 'Schedule the periodic secondary injection test.',
+    'Record anomaly (AI)': 'Review the latest disturbance records; check the analog input module, CT/VT wiring and earthing; compare with a secondary injection test.',
 }
+
+
+# ---------------------------------------------------------------- AI: disturbance-record anomaly model
+WIN_REC = 365
+AI_FULL = 99.5   # percentile of the fleet at which the record anomaly risk is full
+AI_START = 90.0
+
+
+def record_matrix(current, noise):
+    """Model inputs from the disturbance-record features: fault current, pre-fault noise and their ratio (log scale)."""
+    c = np.clip(np.asarray(current, float), 0.01, None); n = np.clip(np.asarray(noise, float), 1e-4, None)
+    return np.c_[np.log10(c), np.log10(n), np.log10(n / c)]
+
+
+def load_record_model(path='record_anomaly_model.pkl'):
+    import pickle
+    try:
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    except Exception:
+        return None
+
+
+def ai_percentile(bundle, current, noise):
+    """How unusual each record is compared with the records the model learned from (0-100; 99 = more unusual than 99%)."""
+    if bundle is None:
+        return np.full(len(np.atleast_1d(current)), np.nan)
+    s = -bundle['model'].score_samples(record_matrix(np.atleast_1d(current), np.atleast_1d(noise)))
+    return 100.0 * np.searchsorted(bundle['train_scores'], s, side='right') / len(bundle['train_scores'])
 
 
 def clamp(x, lo=0.0, hi=100.0):
@@ -278,6 +309,22 @@ def assess(reg, s, today=None):
         out['Months Since Test'] = None
     R['Test overdue'], why['Test overdue'] = s_t, w
 
+    # --- AI: disturbance-record anomaly
+    recs = [r for r in (s.get('records') or []) if isnum(r.get('AI Percentile'))]
+    w = []
+    if recs:
+        last = recs[-3:]
+        med = float(np.median([r['AI Percentile'] for r in last]))
+        s_ai = lin(med, AI_START, AI_FULL, 0, 90)
+        top = max(last, key=lambda r: r['AI Percentile'])
+        w.append(f"AI model: the last {len(last)} disturbance record(s) are more unusual than {med:.0f}% of the real records it learned from "
+                 f"(most unusual: noise index {fmt_num(top['Noise Index'])} at {fmt_num(top['Max Fault Current (A)'])} A).")
+        out['AI Percentile'] = med
+    else:
+        s_ai = 0.0; w.append('No disturbance records in the last year for the AI model.')
+        out['AI Percentile'] = None
+    R['Record anomaly (AI)'], why['Record anomaly (AI)'] = clamp(s_ai), w
+
     # --- overall
     risks = {k: round(R[k], 1) for k in MODE_ORDER}
     gov = max(risks, key=risks.get)
@@ -311,7 +358,7 @@ def findings(a):
 
 
 # ---------------------------------------------------------------- evidence from the files
-def prepare(register, tests=None, events=None):
+def prepare(register, tests=None, events=None, records=None, model=None):
     """Index the files once; summary() then builds the evidence of any relay on any date."""
     reg = {str(r['Relay ID']): r for r in register.to_dict('records')}
     T = {}
@@ -335,7 +382,20 @@ def prepare(register, tests=None, events=None):
         e = e.sort_values('_t')
         for (rid, ev), g in e.groupby(['Relay ID', 'Event']):
             E.setdefault(rid, {})[ev] = (g['_t'].to_numpy(dtype='datetime64[ns]'), g['Value'].to_numpy())
-    return {'reg': reg, 'tests': T, 'events': E}
+    RC = {}
+    if records is not None and len(records):
+        r = records.copy()
+        r['_t'] = pd.to_datetime(r['Timestamp'], errors='coerce'); r = r.dropna(subset=['_t'])
+        r['Relay ID'] = r['Relay ID'].astype(str)
+        for c in ['Max Fault Current (A)', 'Noise Index']:
+            r[c] = pd.to_numeric(r[c], errors='coerce')
+        r = r.dropna(subset=['Max Fault Current (A)', 'Noise Index']).sort_values('_t')
+        if len(r):
+            r['AI Percentile'] = ai_percentile(model, r['Max Fault Current (A)'].to_numpy(), r['Noise Index'].to_numpy())
+        for rid, g in r.groupby('Relay ID'):
+            g = g.assign(Date=g['_t'].dt.strftime('%Y-%m-%d'))
+            RC[rid] = (g['_t'].to_numpy(dtype='datetime64[ns]'), g[['Date', 'Max Fault Current (A)', 'Noise Index', 'AI Percentile']].to_dict('records'))
+    return {'reg': reg, 'tests': T, 'events': E, 'records': RC}
 
 
 def summary(P, rid, day):
@@ -384,21 +444,28 @@ def summary(P, rid, day):
             lo = reset
         a = int(np.searchsorted(ts, lo, 'left')); b = int(np.searchsorted(ts, end, 'left'))
         s['cb_times'] = [float(v) for v in vals[a:b] if not np.isnan(v)]
+    if rid in P.get('records', {}):
+        ts, recs = P['records'][rid]
+        lo = end - np.timedelta64(WIN_REC, 'D')
+        if reset is not None and reset > lo:
+            lo = reset
+        a = int(np.searchsorted(ts, lo, 'left')); b = int(np.searchsorted(ts, end, 'left'))
+        s['records'] = recs[a:b]
     return s
 
 
-def assess_files(register, tests=None, events=None, day=None):
+def assess_files(register, tests=None, events=None, day=None, records=None, model=None):
     """Latest assessment of every relay in the register."""
-    P = prepare(register, tests, events)
+    P = prepare(register, tests, events, records, model)
     if day is None:
         cands = [pd.Timestamp.now().normalize()]
         day = cands[0]
     return [assess(r, summary(P, rid, day), day) for rid, r in P['reg'].items()]
 
 
-def assess_series(register, tests=None, events=None, start=None, end=None):
+def assess_series(register, tests=None, events=None, start=None, end=None, records=None, model=None):
     """Daily assessment of every relay from start to end, each day with only the data up to that day."""
-    P = prepare(register, tests, events)
+    P = prepare(register, tests, events, records, model)
     if start is None or end is None:
         ts = []
         for rid, d in P['events'].items():
@@ -580,6 +647,22 @@ def demo_data(seed=21, start='2025-01-01', end='2026-08-31'):
             if day == fd + pd.Timedelta(days=1 if rid == 'L2-M1' else 0):
                 add(day + pd.Timedelta(hours=23), rid, 'Maintenance')
     events = pd.DataFrame(ev, columns=['Timestamp', 'Relay ID', 'Event', 'Value']).sort_values('Timestamp').reset_index(drop=True)
+
+    # ---- disturbance records: one per trip plus pickups without trip; features drawn from the shape of the real fleet
+    REC_MEAN, REC_COV = [2.2146, 0.0127], [[2.2469, 1.4355], [1.4355, 2.2231]]
+    rec = []
+    trips = events[events['Event'] == 'Trip'][['Timestamp', 'Relay ID']].values.tolist()
+    extra = [[day + pd.Timedelta(hours=int(rng.integers(0, 24))), rid] for day in days for rid in reg['Relay ID']
+             if rng.random() < (1 / 8 if (rid == 'T1-87' and D('2025-04-01') <= day < F['T1-87']) else 1 / 25)]
+    for t, rid in trips + extra:
+        t = pd.Timestamp(t)
+        lc, ln = rng.multivariate_normal(REC_MEAN, np.array(REC_COV) * 0.3)      # healthy relays: typical records
+        if rid == 'T1-87' and D('2025-04-01') <= t < F['T1-87']:
+            f = (t - D('2025-04-01')).days / (F['T1-87'] - D('2025-04-01')).days
+            lc, ln = rng.normal(2.0, 0.2), rng.normal(0.3, 0.25) + 3.4 * f ** 0.8    # analog input noise growing on a failing card
+        rec.append([t, rid, round(10 ** lc, 2), round(10 ** ln, 4)])
+    records = pd.DataFrame(rec, columns=['Timestamp', 'Relay ID', 'Max Fault Current (A)', 'Noise Index']).sort_values('Timestamp').reset_index(drop=True)
+    records['Timestamp'] = pd.to_datetime(records['Timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
     events['Timestamp'] = pd.to_datetime(events['Timestamp']).dt.strftime('%Y-%m-%d %H:%M:%S')
     findings_ = pd.DataFrame([
         ['T1-87', '2025-10-05', 'Relay failure: power supply card failed and replaced'],
@@ -587,4 +670,4 @@ def demo_data(seed=21, start='2025-01-01', end='2026-08-31'):
         ['L2-M1', '2026-03-10', 'Slow zone-2 trip during an external fault; timer card replaced'],
         ['BB-87A', '2026-05-20', 'Loose CT secondary terminal found and tightened'],
         ['L4-M2', '2026-06-15', 'Protection signalling fibre channel repaired']], columns=['Relay ID', 'Date', 'Event'])
-    return {'register': reg, 'tests': tests, 'events': events, 'findings': findings_}
+    return {'register': reg, 'tests': tests, 'events': events, 'records': records, 'findings': findings_}
