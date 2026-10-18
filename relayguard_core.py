@@ -142,7 +142,7 @@ def point_name(p):
 
 def fmt_num(v):
     v = float(v)
-    return f"{v:.0f}" if abs(v) >= 100 else f"{v:.3g}" if abs(v) < 1 else f"{v:.1f}".rstrip('0').rstrip('.')
+    return f"{v:.0f}" if abs(v) >= 1000 else f"{v:.4g}"
 
 
 # ---------------------------------------------------------------- one relay
