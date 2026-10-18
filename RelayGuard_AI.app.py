@@ -10,6 +10,7 @@ import streamlit as st
 import relayguard_core as rc
 import comtrade_features as cf
 import report_pdf as pdfrep
+import omicron_report as omr
 
 st.set_page_config(page_title="RelayGuard AI", page_icon="🛡️", layout="wide")
 
@@ -400,6 +401,12 @@ def init_page(p):
         ss.setdefault(f'{p}_c_{k}', 0)
     ss.setdefault(f'{p}_pts', plan_points('21'))
     ss.setdefault(f'{p}_ptsver', 0)
+    pend = ss.pop(f'{p}_pending', None)       # test points sent from the OMICRON Test Review page
+    if pend:
+        for k in ['id', 'bay', 'fw', 'funcs', 'last_test']:
+            if pend.get(k):
+                ss[f'{p}_{k}'] = pend[k]
+        ss[f'{p}_pts'] = pend['pts']; ss[f'{p}_ptsver'] += 1
     ss.setdefault(f'{p}_recs', pd.DataFrame([{'Date': '2026-09-20', 'Max Fault Current (A)': 850.0, 'Noise Index': 1.2}]))
 
 
@@ -697,8 +704,41 @@ th{{background:#0b2e59;color:#fff;text-align:left;padding:6px}}td{{border-bottom
 def test_review_page():
     st.markdown("<div class='pg-note'>Review an OMICRON test session: each test point against its tolerance, the drift since the previous "
                 "test, and a test report you can download. Quick check only: not added to the overview.</div>", unsafe_allow_html=True)
-    src = st.radio("Test results", ["Demo substation files", "Upload OMICRON export (CSV)"], horizontal=True, key='tr_src')
-    if src.startswith("Demo"):
+    src = st.radio("Test results", ["Upload OMICRON report (PDF or TXT)", "Demo substation files", "Upload test points (CSV)"], horizontal=True, key='tr_src')
+    info_by_rid = {}
+    if src.startswith("Upload OMICRON"):
+        files = st.file_uploader("OMICRON Test Universe report: PDF, or the TXT export (several reports of the same relay give the drift between tests)",
+                                 type=['pdf', 'txt', 'PDF', 'TXT'], accept_multiple_files=True, key='tr_omi')
+        if not files:
+            st.info("Upload one or more OMICRON test reports. The summary pages at the front are optional: the OMICRON automatic test "
+                    "part is read (Assessment Results and Time Assessment tables).")
+            return
+        parsed = []
+        for f in files:
+            try:
+                info, pts = omr.parse(f.getvalue(), f.name)
+            except Exception as e:
+                st.error(f"{f.name}: cannot read the report ({type(e).__name__}: {e})"); continue
+            if pts.empty:
+                st.warning(f"{f.name}: no test results found in this report."); continue
+            rid0 = ' '.join(x for x in [info.get('Bay'), info.get('Device Type')] if x) or f.name.rsplit('.', 1)[0]
+            parsed.append((f.name, info, pts, rid0))
+        if not parsed:
+            return
+        st.caption("Check the relay name and test date read from each report; edit them if needed (same name = same relay, for the drift).")
+        ft = pd.DataFrame([{'File': n, 'Relay ID': r, 'Test Date': i['Test Date'] or date.today(), 'Substation': i.get('Substation', ''),
+                            'Model': i.get('Model', '') or i.get('Device Type', ''), 'Points': len(p), 'Result': i.get('Overall', '')} for n, i, p, r in parsed])
+        ft = st.data_editor(ft, hide_index=True, width=STRETCH, key='tr_files', disabled=['File', 'Substation', 'Model', 'Points', 'Result'],
+                            column_config={'Test Date': st.column_config.DateColumn('Test Date')})
+        rows = []
+        for (n, i, p, _), (_, fr) in zip(parsed, ft.iterrows()):
+            q = p.copy(); q['Date'] = str(pd.Timestamp(fr['Test Date']).date()); q['Relay ID'] = str(fr['Relay ID']).strip() or n
+            rows.append(q)
+            info_by_rid[q['Relay ID'].iloc[0]] = i
+        t_df = pd.concat(rows, ignore_index=True)
+        reg_df = pd.DataFrame([{'Relay ID': rid_, 'Bay': i.get('Bay', ''), 'Functions': ', '.join(sorted(set(t_df[t_df['Relay ID'] == rid_]['Function'].astype(str)))),
+                                'Technology': 'Numerical', 'Firmware': i.get('Firmware', '')} for rid_, i in info_by_rid.items()])
+    elif src.startswith("Demo"):
         reg_df, t_df = demo_full()['register'], demo_full()['tests']
     else:
         c1, c2 = st.columns(2)
@@ -741,6 +781,19 @@ def test_review_page():
     st.dataframe(points_table(pts), hide_index=True, width=STRETCH)
     for t in a['Reasons']['Measurement and timing']:
         st.markdown(f"- {t}")
+    inf = info_by_rid.get(rid)
+    if inf:
+        st.markdown("#### Relay data from the report")
+        st.dataframe(pd.DataFrame([{k: str(v) for k, v in inf.items() if v not in (None, '')}]), hide_index=True, width=STRETCH)
+        if st.button("➡️ Use these test points on the Relay Risk & FMEA page", key='tr_send'):
+            st.session_state['rp_pending'] = {
+                'id': rid, 'bay': inf.get('Bay', ''), 'fw': inf.get('Firmware', ''), 'funcs': reg.get('Functions', ''), 'last_test': pd.Timestamp(d).date(),
+                'pts': pd.DataFrame([{c: q.get(c) for c in ['Function', 'Test Point', 'Quantity', 'Unit', 'Nominal', 'Measured', 'Tolerance', 'Previous Measured']}
+                                     for q in s['points']])}
+            st.session_state['tr_sent'] = True
+            st.rerun()
+    if st.session_state.pop('tr_sent', False):
+        st.success("Sent: open the Relay Risk & FMEA tab, complete the alarms and breaker data, and press Analyze Relay.")
     # history of each test point over all sessions
     hist = []
     for dd in dates:
