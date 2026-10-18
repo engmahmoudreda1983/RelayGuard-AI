@@ -1,4 +1,5 @@
 import hmac
+import os
 from datetime import datetime, date
 
 import numpy as np
@@ -7,6 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 import relayguard_core as rc
+import comtrade_features as cf
 
 st.set_page_config(page_title="RelayGuard AI", page_icon="🛡️", layout="wide")
 
@@ -113,10 +115,20 @@ st.markdown(f"""
 <div class='pg-header'>
   <div>
     <h1>🛡️ RelayGuard AI: Protection Relay Condition and Risk Monitor</h1>
-    <p>OMICRON test results, self-supervision alarms, event logs, breaker timing and relay age, fused into one risk per relay</p>
+    <p>AI on real disturbance records, OMICRON test results, self-supervision alarms, breaker timing and relay age, fused into one risk per relay</p>
   </div>
   {_logo_html}
 </div>""", unsafe_allow_html=True)
+
+
+@st.cache_resource(show_spinner="Loading the AI model…")
+def load_ai():
+    return rc.load_record_model('record_anomaly_model.pkl')
+
+
+AI = load_ai()
+if AI is None:
+    st.warning("AI model file 'record_anomaly_model.pkl' not found: the record anomaly check is off.")
 
 
 @st.cache_data(show_spinner=False)
@@ -125,19 +137,28 @@ def demo_full():
 
 
 @st.cache_data(show_spinner="Assessing every relay, day by day…")
-def run_series(register, tests, events, start=None, end=None):
-    return rc.assess_series(register, tests, events, start, end)
+def run_series(register, tests, events, start=None, end=None, records=None):
+    return rc.assess_series(register, tests, events, start, end, records, AI)
 
 
 def demo_series():
     d = demo_full()
-    return run_series(d['register'], d['tests'], d['events'], DEMO_START, DEMO_END)
+    return run_series(d['register'], d['tests'], d['events'], DEMO_START, DEMO_END, d['records'])
+
+
+@st.cache_data(show_spinner=False)
+def ai_grid():
+    """AI percentile over a grid of fault current and noise index (the landscape the model learned)."""
+    lc = np.linspace(-2, 5, 71); ln = np.linspace(-4, 4, 81)
+    C, N = np.meshgrid(lc, ln)
+    Z = rc.ai_percentile(AI, 10 ** C.ravel(), 10 ** N.ravel()).reshape(C.shape)
+    return lc, ln, Z
 
 
 @st.cache_data(show_spinner=False)
 def demo_snapshot():
     d = demo_full()
-    P = rc.prepare(d['register'], d['tests'], d['events'])
+    P = rc.prepare(d['register'], d['tests'], d['events'], d['records'], AI)
     day = pd.Timestamp(DEMO_DATE)
     return {rid: (r, rc.summary(P, rid, day)) for rid, r in P['reg'].items()}
 
@@ -378,6 +399,7 @@ def init_page(p):
         ss.setdefault(f'{p}_c_{k}', 0)
     ss.setdefault(f'{p}_pts', plan_points('21'))
     ss.setdefault(f'{p}_ptsver', 0)
+    ss.setdefault(f'{p}_recs', pd.DataFrame([{'Date': '2026-09-20', 'Max Fault Current (A)': 850.0, 'Noise Index': 1.2}]))
 
 
 def fill_example(p):
@@ -397,10 +419,12 @@ def fill_example(p):
         ss[f'{p}_c_{k}'] = int(s.get(k, 0))
     ss[f'{p}_pts'] = pd.DataFrame([{c: q.get(c) for c in ['Function', 'Test Point', 'Quantity', 'Unit', 'Nominal', 'Measured', 'Tolerance', 'Previous Measured']}
                                    for q in s['points']])
+    ss[f'{p}_recs'] = pd.DataFrame([{k: q.get(k) for k in ['Date', 'Max Fault Current (A)', 'Noise Index']} for q in s.get('records', [])[-3:]]
+                                   or [{'Date': '', 'Max Fault Current (A)': None, 'Noise Index': None}])
     ss[f'{p}_ptsver'] += 1
 
 
-def collect(p, pts_df):
+def collect(p, pts_df, rec_df=None):
     ss = st.session_state
     g = lambda k: ss.get(f'{p}_{k}', DEF.get(k))
     reg = {'Relay ID': (g('id') or 'RELAY').strip(), 'Bay': g('bay'), 'Protected Object': g('obj'), 'Role': g('role'), 'Functions': g('funcs'),
@@ -410,6 +434,12 @@ def collect(p, pts_df):
     df = pts_df
     s['points'] = [r for r in df.to_dict('records') if rc.isnum(r.get('Nominal')) and rc.isnum(r.get('Measured')) and rc.isnum(r.get('Tolerance'))]
     s['last_test'] = pd.Timestamp(g('last_test')) if g('last_test') else None
+    recs = [r for r in (rec_df.to_dict('records') if rec_df is not None else []) if rc.isnum(r.get('Max Fault Current (A)')) and rc.isnum(r.get('Noise Index'))]
+    if recs:
+        pc = rc.ai_percentile(AI, [float(r['Max Fault Current (A)']) for r in recs], [float(r['Noise Index']) for r in recs])
+        for r, v in zip(recs, pc):
+            r['AI Percentile'] = float(v)
+    s['records'] = recs
     try:
         s['cb_times'] = [float(x) for x in str(g('cbt')).replace(';', ',').split(',') if x.strip()]
     except ValueError:
@@ -445,6 +475,9 @@ def relay_page():
         cols = st.columns(2)
         for i, (k, lab) in enumerate(COUNTS):
             cols[i % 2].number_input(lab, 0, 999, key=f'{p}_c_{k}')
+        st.markdown("**🧠 Disturbance records for the AI model (latest, up to 3)**")
+        st.caption("Max fault current and noise index of each record, as computed on the Disturbance Records (AI) page.")
+        rec_df = st.data_editor(st.session_state[f'{p}_recs'], num_rows='dynamic', key=f"{p}_rec_{st.session_state[f'{p}_ptsver']}", width=STRETCH, hide_index=True)
         st.markdown("**Breaker**")
         c1, c2 = st.columns(2)
         c1.text_input("Breaker ID (empty = none)", key=f'{p}_cb'); c2.number_input("Rated opening time (ms)", 0.0, 500.0, key=f'{p}_rated')
@@ -452,7 +485,7 @@ def relay_page():
         go_btn = st.button("🔍 Analyze Relay", width=STRETCH, key=f"{p}_go", type='primary')
     with right:
         if go_btn:
-            reg, s = collect(p, pts_df)
+            reg, s = collect(p, pts_df, rec_df)
             a = rc.assess(reg, s, pd.Timestamp(st.session_state[f'{p}_day']))
             st.session_state[f"{p}_last"] = (a, reg, s)
             st.session_state['register'] = [r for r in st.session_state['register'] if r['Relay ID'] != a['Relay ID']]
@@ -467,6 +500,152 @@ def relay_page():
             show_result(*last, p)
             st.caption("Added to the Substation Overview and the Combined Report.")
 
+
+
+# ==========================================
+# --- 5a. Disturbance records (AI) ---
+# ==========================================
+def ai_status(pct):
+    v = rc.lin(pct, rc.AI_START, rc.AI_FULL, 0, 90)
+    return v, rc.status_of(v)
+
+
+def landscape_plot(points, height=420):
+    lc, ln, Z = ai_grid()
+    fig = go.Figure(go.Contour(x=lc, y=ln, z=Z, zmin=0, zmax=100, contours=dict(start=0, end=100, size=10),
+                               colorscale=[[0, '#e8f5ee'], [0.85, '#d9efe1'], [0.9, '#fbe8b3'], [0.97, '#f2a6a6'], [1, '#d63a3a']],
+                               colorbar=dict(title='AI<br>percentile', thickness=12), hovertemplate='current 10^%{x:.1f} A, noise 10^%{y:.1f}: %{z:.0f}<extra></extra>'))
+    if points:
+        fig.add_scatter(x=[np.log10(max(p['Max Fault Current (A)'], 0.01)) for p in points], y=[np.log10(max(p['Noise Index'], 1e-4)) for p in points],
+                        mode='markers+text', text=[p.get('label', '') for p in points], textposition='top center',
+                        marker=dict(size=12, color=NAVY, line=dict(color='white', width=1.5)), hovertemplate='%{text}<extra></extra>', showlegend=False)
+    fig.update_layout(title=f"What the AI learned from {AI['n_records'] if AI else 0} real disturbance records (red = unusual, green = normal fleet behaviour)", height=height,
+                      xaxis=dict(title='Max fault current (A, log scale)', tickvals=list(range(-2, 6)), ticktext=[f"10^{i}" for i in range(-2, 6)]),
+                      yaxis=dict(title='Noise index (log scale)', tickvals=list(range(-4, 5)), ticktext=[f"10^{i}" for i in range(-4, 5)]),
+                      margin=dict(l=60, r=10, t=50, b=50))
+    return fig
+
+
+def waveform_plot(cfg, t, A, D, feat, height=520):
+    from plotly.subplots import make_subplots
+    I = [i for i, c in enumerate(cfg['analog']) if c['unit'].upper() in ('A', 'KA')][:4]
+    V = [i for i, c in enumerate(cfg['analog']) if c['unit'].upper() in ('V', 'KV')][:3]
+    rows = 2 if V else 1
+    fig = make_subplots(rows=rows, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+                        subplot_titles=['Currents'] + (['Voltages'] if V else []))
+    ms = (t - t[0]) * 1000
+    step = max(1, len(ms) // 4000)
+    for i in I:
+        fig.add_scatter(x=ms[::step], y=A[::step, i], mode='lines', name=cfg['analog'][i]['name'], line=dict(width=1), row=1, col=1)
+    for i in V:
+        fig.add_scatter(x=ms[::step], y=A[::step, i], mode='lines', name=cfg['analog'][i]['name'], line=dict(width=1), row=2, col=1)
+    for key, lab, col in [('Fault Inception (ms)', 'Fault', AMBER), ('Trip Time In Record (ms)', 'Trip', RED)]:
+        v = feat.get(key)
+        if v is not None and not pd.isna(v):
+            for r in range(1, rows + 1):
+                fig.add_vline(x=float(v), line_dash='dash', line_color=col, row=r, col=1)
+            fig.add_annotation(x=float(v), y=1.04, yref='paper', text=lab, showarrow=False, font=dict(color=col))
+    fig.update_layout(height=height, legend=dict(orientation='h', y=-0.12), margin=dict(l=50, r=10, t=40, b=40))
+    fig.update_xaxes(title_text='ms from record start', row=rows, col=1)
+    return fig
+
+
+def records_page():
+    st.markdown("<div class='pg-note'><b>AI on disturbance records.</b> The model (Isolation Forest) learned the normal behaviour of the fleet from "
+                f"<b>{AI['n_records'] if AI else 0} real disturbance records</b>. Each new record is placed against that learned behaviour: the AI "
+                "percentile says how unusual it is (99 = more unusual than 99% of the real records). The relay's AI risk uses the median of its last 3 records. "
+                "The records are read here, in the app; nothing is stored.</div>", unsafe_allow_html=True)
+    src = st.radio("Records", ["Upload COMTRADE files (.cfg + .dat)", "Demo record", "Feature table of many records (CSV)"], horizontal=True, key='dr_src')
+    if src.startswith("Feature"):
+        c1, c2 = st.columns([1, 1])
+        use_demo = c1.checkbox("Use the demo substation records", True, key='dr_demo_tab')
+        if use_demo:
+            T = demo_full()['records'].copy()
+        else:
+            T, e = read_csv("Records: Timestamp, Relay ID, Max Fault Current (A), Noise Index", 'dr_tab', ['Timestamp', 'Relay ID', 'Max Fault Current (A)', 'Noise Index'])
+            if e:
+                st.error(e)
+            if T is None:
+                return
+        T = T.copy()
+        T['AI Percentile'] = rc.ai_percentile(AI, pd.to_numeric(T['Max Fault Current (A)'], errors='coerce').to_numpy(float),
+                                              pd.to_numeric(T['Noise Index'], errors='coerce').to_numpy(float)).round(1)
+        T['_t'] = pd.to_datetime(T['Timestamp'], errors='coerce')
+        if use_demo:
+            T = T[T['_t'] <= pd.Timestamp(DEMO_DATE) + pd.Timedelta(days=1)]
+            st.caption(f"Demo records up to {DEMO_DATE}.")
+        last = T.sort_values('_t').groupby('Relay ID').tail(3).groupby('Relay ID')['AI Percentile'].median().sort_values(ascending=False)
+        risk = last.apply(lambda v: ai_status(v)[0])
+        fig = go.Figure(go.Bar(x=risk.values, y=risk.index, orientation='h', marker_color=[band_color(v) for v in risk.values],
+                               text=[f"{v:.0f}% · percentile {p:.0f}" for v, p in zip(risk.values, last.values)], textposition='outside', cliponaxis=False))
+        fig.update_layout(title='AI record-anomaly risk per relay (median of the last 3 records)', height=140 + 28 * len(risk),
+                          xaxis=dict(range=[0, 125], title='Risk (%)'), yaxis=dict(autorange='reversed', type='category'), margin=dict(l=10, r=30, t=50, b=40))
+        st.plotly_chart(fig, width=STRETCH, key='dr_rank')
+        top = T.sort_values('AI Percentile', ascending=False).head(12)
+        st.plotly_chart(landscape_plot([{'Max Fault Current (A)': float(r['Max Fault Current (A)']), 'Noise Index': float(r['Noise Index']),
+                                         'label': str(r['Relay ID'])} for _, r in top.iterrows()]), width=STRETCH, key='dr_land_t')
+        st.markdown("#### Most unusual records")
+        st.dataframe(top.drop(columns=['_t']), hide_index=True, width=STRETCH)
+        return
+    recs = []
+    if src.startswith("Demo"):
+        c, d = cf.demo_record()
+        recs.append(('demo_fault_record', c, d))
+    else:
+        files = st.file_uploader("Select the .cfg and .dat files together (several records at once is fine)", type=['cfg', 'dat', 'CFG', 'DAT'],
+                                 accept_multiple_files=True, key='dr_files')
+        if not files:
+            st.info("Pick the .cfg and .dat files of one or more records.")
+            return
+        byname = {}
+        for f in files:
+            stem, ext = os.path.splitext(f.name)
+            byname.setdefault(stem, {})[ext.lower()] = f
+        for stem, fs in sorted(byname.items()):
+            if '.cfg' in fs and '.dat' in fs:
+                recs.append((stem, fs['.cfg'].getvalue().decode('latin-1'), fs['.dat'].getvalue()))
+            else:
+                st.warning(f"{stem}: the {'.dat' if '.cfg' in fs else '.cfg'} file is missing.")
+    rows, parsed = [], {}
+    for stem, ctext, dbytes in recs:
+        try:
+            feat = cf.features(cfg_text=ctext, dat_bytes=dbytes, name=stem)
+            feat['AI Percentile'] = float(rc.ai_percentile(AI, feat['Max Fault Current (A)'], feat['Noise Index'])[0])
+            rows.append(feat); parsed[stem] = (ctext, dbytes, feat)
+        except Exception as e:
+            st.error(f"{stem}: cannot read the record ({type(e).__name__}: {e})")
+    if not rows:
+        return
+    F = pd.DataFrame(rows)
+    sel = st.selectbox("Record", list(parsed), key='dr_sel') if len(parsed) > 1 else list(parsed)[0]
+    ctext, dbytes, feat = parsed[sel]
+    cfg, t, A, D = cf.load(ctext, dbytes)
+    v, stt = ai_status(feat['AI Percentile'])
+    banner(STATUS_LABEL[stt], f"{sel} · AI percentile {feat['AI Percentile']:.0f} (more unusual than {feat['AI Percentile']:.0f}% of the real records)", STATUS_COLOR[stt])
+    m = st.columns(5)
+    m[0].metric("Max fault current", f"{feat['Max Fault Current (A)']:.4g} A")
+    m[1].metric("Noise index", f"{feat['Noise Index']:.4g}")
+    m[2].metric("Relay operate time", "—" if pd.isna(feat.get('Relay Operate Time (ms)')) else f"{feat['Relay Operate Time (ms)']:.0f} ms")
+    m[3].metric("Breaker clearing", "—" if pd.isna(feat.get('Breaker Clearing Time (ms)', np.nan)) else f"{feat['Breaker Clearing Time (ms)']:.0f} ms")
+    m[4].metric("Record type", "Likely test" if feat.get('Likely Test Record') else "Fault / disturbance")
+    c1, c2 = st.columns([1, 1.35])
+    c1.plotly_chart(gauge(v, STATUS_COLOR[stt], 'AI record-anomaly risk (%)'), width=STRETCH, key='dr_g')
+    c2.plotly_chart(landscape_plot([{**feat, 'label': 'this record'}], 360), width=STRETCH, key='dr_land')
+    notes = []
+    if feat.get('Clock Invalid'):
+        notes.append(f"Relay clock not synchronised: the record is dated {feat['Record Time']}.")
+    if feat.get('Likely Test Record'):
+        notes.append("Looks like a secondary injection test (trip without the current being interrupted, or no voltage): keep it out of the fault statistics.")
+    if feat.get('CT Residual Mismatch (% of fault)') is not None and not pd.isna(feat.get('CT Residual Mismatch (% of fault)')) and feat['CT Residual Mismatch (% of fault)'] > 5:
+        notes.append(f"Measured neutral differs from the sum of the phases by {feat['CT Residual Mismatch (% of fault)']:.1f}% of the fault current: check the CT circuit.")
+    if feat.get('Flag Not Ready') or feat.get('Flag Outputs Blocked'):
+        notes.append("The relay reported itself not ready or with blocked outputs during the record.")
+    for n in notes:
+        st.markdown(f"- {n}")
+    st.plotly_chart(waveform_plot(cfg, t, A, D, feat), width=STRETCH, key='dr_wave')
+    with st.expander("All extracted features"):
+        st.dataframe(F, hide_index=True, width=STRETCH)
+    st.download_button("📥 Download the features (CSV)", F.to_csv(index=False).encode('utf-8-sig'), 'disturbance_record_features.csv', 'text/csv')
 
 # ==========================================
 # --- 5. Quick checks ---
@@ -485,7 +664,8 @@ def read_csv(label, key, need):
 
 NEED = {'register': ['Relay ID', 'Bay', 'Protected Object', 'Role', 'Functions', 'Technology', 'Commission Year', 'Test Interval (months)'],
         'tests': ['Date', 'Relay ID', 'Function', 'Test Point', 'Quantity', 'Nominal', 'Measured', 'Tolerance'],
-        'events': ['Timestamp', 'Relay ID', 'Event'], 'findings': ['Relay ID', 'Date', 'Event']}
+        'events': ['Timestamp', 'Relay ID', 'Event'], 'records': ['Timestamp', 'Relay ID', 'Max Fault Current (A)', 'Noise Index'],
+        'findings': ['Relay ID', 'Date', 'Event']}
 
 
 def test_report_html(rid, d, pts, reg):
@@ -672,8 +852,8 @@ def breaker_page():
 # ==========================================
 # --- 6. Tabs ---
 # ==========================================
-tabs = st.tabs(["🏭 Substation Overview", "🛡️ Relay Risk & FMEA", "🧪 OMICRON Test Review", "🚨 Alarms & Events",
-                "⚡ Breaker Timing", "📄 Combined Report", "📈 Historical Study"])
+tabs = st.tabs(["🏭 Substation Overview", "🛡️ Relay Risk & FMEA", "🧠 Disturbance Records (AI)", "🧪 OMICRON Test Review",
+                "🚨 Alarms & Events", "⚡ Breaker Timing", "📄 Combined Report", "📈 Historical Study"])
 
 with tabs[0]:
     st.radio("Show", [SRC_PAGES, SRC_DEMO], horizontal=True, key='ov_src')
@@ -700,11 +880,13 @@ with tabs[0]:
         cbr = R.dropna(subset=['CB Opening Time (ms)'])
         failed = int((R['Points Failed'] > 0).sum())
         overdue = R[R['Mode Risks'].apply(lambda m: m['Test overdue'] > 0)]
+        ai_flag = R[R['Mode Risks'].apply(lambda m: m['Record anomaly (AI)'] > rc.EXCELLENT_MAX)]
         cards = [("Highest risk", f"{w['Overall Risk (%)']:.0f}%", STATUS_COLOR[w['Status']], f"{w['Relay ID']} · {w['Governing Mode']}"),
                  ("Highest RPN", f"{int(rp['RPN'])}", rpn_color(rp['RPN']), f"{rp['Relay ID']} · {rp['RPN Level']}"),
                  ("Relays with failed test points", f"{failed}", RED if failed else GREEN, "latest OMICRON session"),
-                 ("Tests overdue", f"{len(overdue)}", AMBER if len(overdue) else GREEN, ', '.join(overdue['Relay ID'].head(4)) or 'none')]
-        for col, (t, big, c, sub) in zip(st.columns(4), cards):
+                 ("Tests overdue", f"{len(overdue)}", AMBER if len(overdue) else GREEN, ', '.join(overdue['Relay ID'].head(4)) or 'none'),
+                 ("🧠 AI record anomalies", f"{len(ai_flag)}", AMBER if len(ai_flag) else GREEN, ', '.join(ai_flag['Relay ID'].head(4)) or 'none')]
+        for col, (t, big, c, sub) in zip(st.columns(5), cards):
             col.markdown(f"<div class='pg-card' style='border-top:5px solid {c}'><h4>{t}</h4><div class='big' style='color:{c}'>{big}</div>"
                          f"<div class='sub'>{sub}</div></div>", unsafe_allow_html=True)
         st.write("")
@@ -722,13 +904,15 @@ with tabs[0]:
 with tabs[1]:
     relay_page()
 with tabs[2]:
-    test_review_page()
+    records_page()
 with tabs[3]:
-    events_page()
+    test_review_page()
 with tabs[4]:
+    events_page()
+with tabs[5]:
     breaker_page()
 
-with tabs[5]:
+with tabs[6]:
     recs = current_records()
     if not recs:
         st.markdown("<h3 style='text-align:center;color:#888;margin-top:40px'>💡 Analyze relays on the Relay Risk & FMEA page "
@@ -784,7 +968,7 @@ with tabs[5]:
         d2.download_button("📥 Download Table (CSV)", R[cols].round(1).to_csv(index=False).encode('utf-8-sig'), f"RelayGuard_Report_{datetime.now():%Y%m%d}.csv", 'text/csv')
         d3.download_button("📥 Download FMEA, all modes (CSV)", fm.to_csv(index=False).encode('utf-8-sig'), f"RelayGuard_FMEA_{datetime.now():%Y%m%d}.csv", 'text/csv')
 
-with tabs[6]:
+with tabs[7]:
     st.markdown("<div class='pg-note'>Replays the history day by day. Each day every relay is assessed with only the data that existed on "
                 "that day (latest test session, alarm windows, breaker trips), then the alerts are compared with the recorded failures and "
                 "findings. The result shows how early the system would have warned.</div>", unsafe_allow_html=True)
@@ -792,7 +976,7 @@ with tabs[6]:
     files, errs = {}, []
     if hsrc.startswith("Upload"):
         lab = {'register': 'Relay register (required)', 'tests': 'OMICRON test points (required)', 'events': 'Event log / SER (required)',
-               'findings': 'Findings: failures and major findings'}
+               'records': 'Disturbance record features (optional, for the AI)', 'findings': 'Findings: failures and major findings'}
         cols = st.columns(2)
         for i, k in enumerate(NEED):
             with cols[i % 2]:
@@ -805,10 +989,11 @@ with tabs[6]:
   Firmware, Latest Firmware, Test Interval (months), Breaker ID, CB Rated Opening Time (ms)`.
 - **OMICRON test points:** `Date, Relay ID, Function, Test Point, Quantity, Unit, Nominal, Measured, Tolerance, Result`.
 - **Event log (SER):** `Timestamp, Relay ID, Event, Value` (Value = breaker opening time in ms for `Trip`).
+- **Disturbance record features (AI):** `Timestamp, Relay ID, Max Fault Current (A), Noise Index` (one row per record; the Disturbance Records page computes them from COMTRADE files).
 - **Findings:** `Relay ID, Date, Event`.
 """)
             dm = demo_full()
-            for col, kk in zip(st.columns(4), NEED):
+            for col, kk in zip(st.columns(5), NEED):
                 col.download_button(kk.capitalize(), dm[kk].to_csv(index=False).encode('utf-8-sig'), f"demo_relay_{kk}.csv", 'text/csv', key=f"dl_{kk}")
     h1, h2 = st.columns(2)
     thr = h1.number_input("Alert threshold (%)", 50, 95, 70, 5)
@@ -822,7 +1007,7 @@ with tabs[6]:
                 st.error(e)
             if not errs and all(files.get(k) is not None for k in ['register', 'tests', 'events']):
                 data = files
-                rows = run_series(files['register'], files['tests'], files['events'])
+                rows = run_series(files['register'], files['tests'], files['events'], records=files.get('records'))
             elif not errs:
                 st.error("Load the relay register, the OMICRON test points and the event log, plus the findings file.")
         if rows:
@@ -884,7 +1069,7 @@ with tabs[6]:
                            'relayguard_historical_timeline.csv', 'text/csv')
     with st.expander("How the failure risk is calculated"):
         st.markdown("""
-Each relay gets a risk (0-100%) for seven failure modes:
+Each relay gets a risk (0-100%) for eight failure modes:
 
 | Failure mode | Main inputs | Rule |
 |---|---|---|
@@ -895,6 +1080,7 @@ Each relay gets a risk (0-100%) for seven failure modes:
 | Communication | communication failures, time sync losses (30 days) | +15 on a line differential relay (protection signalling) |
 | Age and obsolescence | age against expected life (numerical 20, static 25, electromechanical 30 years), firmware, self-supervision | |
 | Test overdue | months since the last test against the test interval | 1.5× the interval = 60% |
+| **Record anomaly (AI)** | disturbance records: fault current and noise index | Isolation Forest trained on 694 real disturbance records; median AI percentile of the last 3 records; 90 starts the risk, 99.5 = 90% |
 
 A `Maintenance` entry in the event log (repair completed) resets the alarm windows and the breaker timing history.
 **Overall risk** = the highest mode risk + 5 points for every other mode above normal. Bands: ≤ 35% normal, ≤ 70% watch, > 70% action.
