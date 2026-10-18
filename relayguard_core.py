@@ -217,7 +217,7 @@ def assess(reg, s, today=None):
             w.append(f"Breaker {out['Breaker ID']}: opening time {med:.0f} ms (median of the last {len(last3)} trips) against {rated:.0f} ms rated ({ratio:.2f}×).")
             if len(times) >= 4:
                 y = np.array(times[-6:]); x = np.arange(len(y))
-                slope = float(np.polyfit(x, y, 1)[0]) / rated * 100
+                slope = round(float(np.polyfit(x, y, 1)[0]), 6) / rated * 100     # rounded: same result on every platform
                 if slope > 1:
                     s_b += lin(slope, 1, 5, 0, 20)
                     w.append(f"Opening time rising {slope:.1f}% of rated per operation.")
