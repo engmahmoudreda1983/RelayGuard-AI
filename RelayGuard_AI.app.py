@@ -917,10 +917,51 @@ def breaker_page():
 # ==========================================
 # --- 6. Tabs ---
 # ==========================================
+# ---- about this module: shown open at the top of the overview page (it can be closed)
+ABOUT = {
+ "lead": "Tells you which protection relays and breakers are healthy and which need attention, from their disturbance records, OMICRON test results, alarms and breaker timing.",
+ "in": [
+  "Disturbance records (COMTRADE .cfg + .dat)",
+  "OMICRON Test Universe reports (PDF or TXT)",
+  "Relay alarm and event log (CSV)",
+  "Breaker opening times from the last trips"
+ ],
+ "out": [
+  "Abnormal records found by the AI model",
+  "Test drift between OMICRON tests of the same relay",
+  "Recurring alarms, slow breakers",
+  "Risk ranking and FMEA per relay, combined PDF report"
+ ],
+ "start": [
+  "Upload a relay's records in Disturbance Records (AI)",
+  "Upload its OMICRON reports in OMICRON Test Review",
+  "Read the ranking in Relay Risk & FMEA"
+ ],
+ "pages": [
+  "Substation Overview: every relay and its risk",
+  "Relay Risk & FMEA",
+  "Disturbance Records (AI), OMICRON Test Review",
+  "Alarms & Events, Breaker Timing, Combined Report, Historical Study"
+ ],
+ "std": "IEEE C37.111 (COMTRADE records) · ISO 55000 / IEC 31010 (risk)"
+}
+
+
+def about_module():
+    with st.expander('ℹ️ About this module: what it does and how to use it', expanded=True):
+        st.markdown(ABOUT['lead'])
+        for (t1, k1), (t2, k2) in ((('What you upload', 'in'), ('What you get', 'out')), (('How to start', 'start'), ('Pages', 'pages'))):
+            for col, title, key in zip(st.columns(2), (t1, t2), (k1, k2)):
+                with col.container(border=True):
+                    st.markdown(f'**{title}**\n\n' + '\n'.join((f'{i + 1}. ' if key == 'start' else '- ') + x for i, x in enumerate(ABOUT[key])))
+        st.caption('Standards: ' + ABOUT['std'])
+
+
 tabs = st.tabs(["🏭 Substation Overview", "🛡️ Relay Risk & FMEA", "🧠 Disturbance Records (AI)", "🧪 OMICRON Test Review",
                 "🚨 Alarms & Events", "⚡ Breaker Timing", "📄 Combined Report", "📈 Historical Study"])
 
 with tabs[0]:
+    about_module()
     st.radio("Show", [SRC_PAGES, SRC_DEMO], horizontal=True, key='ov_src')
     R0 = current_records()
     if st.session_state['ov_src'] == SRC_PAGES:
