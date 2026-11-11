@@ -1,4 +1,5 @@
 import hmac
+import io
 import os
 from datetime import datetime, date
 
@@ -455,9 +456,123 @@ def collect(p, pts_df, rec_df=None):
     return reg, s
 
 
+# ---- fill the relay form from its own files (OMICRON reports, disturbance records, event log)
+def _read_uploaded_records(files):
+    """(name, cfg text, dat bytes) of every COMTRADE pair in the uploads (also inside .zip files)."""
+    import zipfile
+    by = {}
+    for f in files or []:
+        if f.name.lower().endswith('.zip'):
+            with zipfile.ZipFile(io.BytesIO(f.getvalue())) as z:
+                for n in z.namelist():
+                    if not n.endswith('/'):
+                        by[n] = z.read(n)
+        else:
+            by[f.name] = f.getvalue()
+    low = {n.lower(): n for n in by}
+    out = []
+    for n in by:
+        if n.lower().endswith('.cfg') and low.get(n[:-4].lower() + '.dat'):
+            out.append((n.rsplit('/', 1)[-1][:-4], by[n].decode('latin-1'), by[low[n[:-4].lower() + '.dat']]))
+    return out
+
+
+def fill_from_files(p):
+    """Callback: read the uploaded files and fill the relay form (runs before the form widgets are drawn)."""
+    ss = st.session_state
+    msg, warn = [], []
+    rid = (ss.get(f'{p}_id') or '').strip()
+    day = pd.Timestamp(ss.get(f'{p}_day') or date.today())
+    tests = []
+    for f in ss.get('rf_omi') or []:
+        try:
+            info, pts = omr.parse(f.getvalue(), f.name)
+        except Exception as e:
+            warn.append(f"{f.name}: cannot read the report ({type(e).__name__})"); continue
+        if pts.empty:
+            warn.append(f"{f.name}: no test results found"); continue
+        q = pts.copy(); q['Date'] = str(info.get('Test Date') or day.date()); tests.append((info, q))
+    if tests:
+        tests.sort(key=lambda x: x[1]['Date'].iloc[0])
+        info = tests[-1][0]
+        rid = rid if ss.get('rf_keep_id') and rid else (' '.join(x for x in [info.get('Bay'), info.get('Device Type')] if x) or rid or 'RELAY')
+        for k, v in (('id', rid), ('bay', info.get('Bay')), ('fw', info.get('Firmware'))):
+            if v:
+                ss[f'{p}_{k}'] = v
+        msg.append(f"{len(tests)} OMICRON report(s): test points of {tests[-1][1]['Date'].iloc[0]}"
+                   + (f", drift against {tests[-2][1]['Date'].iloc[0]}" if len(tests) > 1 else ''))
+    rid = rid or 'RELAY'
+    t_df = pd.concat([q.assign(**{'Relay ID': rid}) for _, q in tests], ignore_index=True) if tests else None
+    e_df = None
+    ev_file = ss.get('rf_ev')
+    if ev_file is not None:
+        try:
+            e_df = pd.read_csv(io.BytesIO(ev_file.getvalue()))
+            src = ss.get('rf_ev_rid')
+            if 'Relay ID' in e_df and src:
+                e_df = e_df[e_df['Relay ID'].astype(str) == str(src)].assign(**{'Relay ID': rid})
+            msg.append(f"event log: {len(e_df)} event(s) of {src or rid}")
+        except Exception as e:
+            warn.append(f"{ev_file.name}: cannot read the event log ({type(e).__name__})"); e_df = None
+    P = rc.prepare(pd.DataFrame({'Relay ID': [rid]}), t_df, e_df)
+    s = rc.summary(P, rid, day)
+    if tests:
+        ss[f'{p}_last_test'] = pd.Timestamp(s['last_test']).date() if s['last_test'] is not None else day.date()
+        ss[f'{p}_pts'] = pd.DataFrame([{c: q.get(c) for c in ['Function', 'Test Point', 'Quantity', 'Unit', 'Nominal', 'Measured', 'Tolerance', 'Previous Measured']}
+                                       for q in s['points']])
+    if e_df is not None:
+        for k, _ in COUNTS:
+            ss[f'{p}_c_{k}'] = int(s.get(k, 0))
+        if s.get('cb_times'):
+            ss[f'{p}_cbt'] = ', '.join(f"{t:g}" for t in s['cb_times'][-6:])
+    recs = []
+    for stem, ctext, dbytes in _read_uploaded_records(ss.get('rf_rec')):
+        try:
+            ft = cf.features(cfg_text=ctext, dat_bytes=dbytes, name=stem)
+            recs.append({'Date': str(ft.get('Record Time') or '')[:10], 'Max Fault Current (A)': float(ft['Max Fault Current (A)']),
+                         'Noise Index': float(ft['Noise Index'])})
+        except Exception as e:
+            warn.append(f"{stem}: cannot read the record ({type(e).__name__})")
+    if recs:
+        recs = sorted(recs, key=lambda r: r['Date'])[-3:]
+        ss[f'{p}_recs'] = pd.DataFrame(recs)
+        msg.append(f"{len(recs)} disturbance record(s) for the AI model")
+    ss[f'{p}_ptsver'] += 1
+    ss['rf_msg'] = (msg, warn)
+
+
+def files_panel(p):
+    ss = st.session_state
+    with st.expander('📂 Step 1: fill this relay from its files (or type the values in the form below)', expanded=True):
+        st.caption("Upload the files of ONE relay. The form below is filled from them; check it, complete what is missing (breaker, firmware), "
+                   "then press Analyze Relay. Every file is optional.")
+        c1, c2, c3 = st.columns(3)
+        c1.file_uploader('OMICRON test reports (PDF or TXT; two or more give the drift)', type=['pdf', 'txt', 'PDF', 'TXT'],
+                         accept_multiple_files=True, key='rf_omi')
+        c2.file_uploader('Disturbance records (.cfg + .dat, or a .zip)', type=['cfg', 'dat', 'zip', 'CFG', 'DAT', 'ZIP'],
+                         accept_multiple_files=True, key='rf_rec')
+        ev = c3.file_uploader('Event log (CSV: Timestamp, Relay ID, Event, Value)', type=['csv', 'CSV'], key='rf_ev')
+        if ev is not None:
+            try:
+                ids = sorted(pd.read_csv(io.BytesIO(ev.getvalue()))['Relay ID'].astype(str).unique())
+                c3.selectbox('This relay in the event log', ids, key='rf_ev_rid')
+            except Exception:
+                c3.error('The event log needs the columns Timestamp, Relay ID, Event, Value.')
+        st.checkbox('Keep the Relay ID typed in the form (otherwise it is taken from the OMICRON report)', key='rf_keep_id')
+        st.button('📥 Fill the form from these files', key='rf_go', on_click=fill_from_files, args=(p,),
+                  disabled=not (ss.get('rf_omi') or ss.get('rf_rec') or ss.get('rf_ev')))
+        m = ss.get('rf_msg')
+        if m:
+            if m[0]:
+                st.success('Filled: ' + '; '.join(m[0]) + '. Check the form and press Analyze Relay.')
+            for w in m[1]:
+                st.warning(w)
+
+
 def relay_page():
     p = 'rp'
     init_page(p)
+    files_panel(p)
     left, right = st.columns([1, 1.7])
     reg_ids = ['—'] + list(demo_full()['register']['Relay ID'])
     with left:
@@ -933,9 +1048,9 @@ ABOUT = {
   "Risk ranking and FMEA per relay, combined PDF report"
  ],
  "start": [
-  "Upload a relay's records in Disturbance Records (AI)",
-  "Upload its OMICRON reports in OMICRON Test Review",
-  "Read the ranking in Relay Risk & FMEA"
+  "Relay Risk & FMEA: upload one relay's OMICRON reports, disturbance records and event log in Step 1",
+  "Press Fill the form, check it, press Analyze Relay",
+  "Repeat for each relay and read the ranking here (Substation Overview)"
  ],
  "pages": [
   "Substation Overview: every relay and its risk",
@@ -974,8 +1089,13 @@ with tabs[0]:
         st.info(f"Synthetic demo substation: 4 lines (Main 1 distance, Main 2 line differential), 2 transformers, 2 busbar zones and "
                 f"1 reactor, 15 relays; status on {DEMO_DATE}. Not real measurements.")
     if not R0:
-        st.markdown("<h3 style='text-align:center;color:#888;margin-top:30px'>💡 No results yet: analyze a relay on the "
-                    "Relay Risk & FMEA page, or show the demo substation.</h3>", unsafe_allow_html=True)
+        st.markdown("<div class='pg-note'><b>💡 No relay analysed yet.</b> To analyse your own relays:<br>"
+                    "1. Open the <b>🛡️ Relay Risk & FMEA</b> tab.<br>"
+                    "2. In <b>Step 1</b> at the top, upload the files of one relay: its OMICRON test reports, its disturbance records and "
+                    "the event log, then press <b>Fill the form from these files</b>.<br>"
+                    "3. Check the form, complete what is missing (breaker, firmware) and press <b>Analyze Relay</b>.<br>"
+                    "4. Repeat for each relay: every result is collected here and in the Combined Report.<br>"
+                    "To see how it looks first, choose <b>Demo substation</b> above.</div>", unsafe_allow_html=True)
     else:
         R = pd.DataFrame(R0).sort_values('Overall Risk (%)', ascending=False).reset_index(drop=True)
         k1, k2, k3, k4 = st.columns(4)

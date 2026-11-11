@@ -7,7 +7,9 @@ Protection relay condition and risk monitor. Part of the PowerGuard AI platform.
 
 ## Pages
 - **Substation Overview:** results collected from the relay page, or the demo substation (15 relays).
-- **Relay Risk & FMEA:** latest evidence of one relay → risk for 7 failure modes, overall risk, FMEA and RPN.
+- **Relay Risk & FMEA:** latest evidence of one relay → risk for 7 failure modes, overall risk, FMEA and RPN. Step 1 at the top fills the
+  form from the relay's own files: OMICRON reports (test points and the drift between tests), disturbance records (AI features) and the event log
+  (alarm counts, breaker opening times).
 - **Disturbance Records (AI):** upload COMTRADE files (.cfg + .dat); waveforms, extracted features and the AI anomaly score.
 - **OMICRON Test Review:** test points against tolerance, drift between tests, downloadable HTML test report.
 - **Alarms & Events:** event log (SER) counted in the engine's windows, event timeline.
